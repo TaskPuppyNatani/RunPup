@@ -3,7 +3,8 @@
 RunPup is a local-first desktop catalog for completed machine-learning training
 runs. It supplies the domain model, SQLite persistence, external file references,
 a minimal Run Library, and a non-UI HF Trainer/Unsloth-compatible import core.
-Import review, canonical import saving, and comparison are not implemented yet.
+Reviewed imports can be saved programmatically. Import review UI and comparison
+are not implemented yet.
 RunPup does not train models.
 
 ## Develop and launch
@@ -47,6 +48,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
 - `services/paths.py`: the only external-reference path constructor. Roots may
   have absolute locations or locations relative to an explicitly supplied
   portable base. There is no remapping or portable-mode UI in this milestone.
+- `services/import_commit.py`: structured review validation, canonical conversion,
+  and one transactional repository handoff with an aggregate reload.
 - `ui/`: dark desktop shell, empty state, and repository-backed library rows.
 
 Artifact and dataset records are references, not owned payloads. Saving and
@@ -63,9 +66,9 @@ Dataset or Tag are rejected rather than silently changing other runs. Deleting
 a run removes its owned rows and links; shared Dataset/Tag records remain.
 
 Provenance targets a run or one of its parameters, metrics, artifacts, or linked
-datasets. Multiple source candidates can coexist. No conflict-resolution
-behavior is implied. Historical training timestamps and status remain unknown
-unless explicitly supplied; import time is never substituted for them.
+datasets. Multiple source candidates can coexist. Historical training timestamps
+and status remain unknown unless explicitly supplied; import time is never
+substituted for them.
 
 The images in `examples/ui/` are design references, not application code. The
 original TaskPuppy branding asset is included as package data without alteration.
@@ -128,3 +131,52 @@ entries, 256 metric candidates, and 1,000 ordinary diagnostics. Malformed or
 oversized optional files produce recoverable diagnostics. Exhausted aggregate
 limits produce blocking diagnostics so incomplete evidence cannot look complete.
 The source directory is never written, and this API does not access SQLite.
+
+## Reviewed import persistence (M2B1)
+
+```python
+from runpup.services.import_commit import ProposedRunCommitService
+
+service = ProposedRunCommitService(repository)  # initialized CatalogRepository
+reviewed = proposal.with_user_edit("learning_rate", 0.0002)
+validation = service.validate(reviewed)  # no catalog writes
+if validation.can_commit:
+    saved = service.commit(reviewed)  # returns the reloaded canonical Run
+else:
+    print(validation.blocking)
+```
+
+`CommitValidation` exposes blocking diagnostics, non-blocking warnings, and the
+prepared Run. `commit()` validates again and raises `ProposalValidationError`
+with that structured result when blocked. Database write failures propagate
+after rollback. Missing required values and unresolved material conflicts block;
+unknown optional values and unavailable external references do not. Known
+symlink escapes and unregistered referenced roots block. No payload is opened
+or hashed during commit.
+
+Accepted values become Run fields, typed Parameters, Metrics, or a linked
+Dataset. Imported candidates retain their IDs, raw/candidate values, sources,
+confidence, timestamps, and modification flags; their current values reflect
+the review selection. All manual edits retain their historical values and flags.
+Targets are rebound to the corresponding canonical entity. Non-material
+conflicts retain their evidence without a selected value. Since Metric requires
+a number, unresolved or explicitly cleared metrics retain run-level provenance
+under their full `metric:` identity instead of creating a numeric observation.
+Resolved metrics preserve name, context, summary, step, and unit, with competing
+candidates pointing to the single accepted Metric.
+
+An identified Dataset uses a stable proposal-specific ID. To reuse a known
+Dataset, pass `dataset_id=existing_dataset.id` to validation/commit; its complete
+definition must match the repository's exact equality contract. Names alone do
+not prove reuse. Unnamed dataset facts and incomplete hash pairs remain typed
+Parameters with provenance; no name or hash algorithm is guessed. All original
+diagnostics and non-blocking validation diagnostics survive reload.
+
+`CatalogRepository.save_import()` registers the unchanged source root, reuses
+the existing aggregate writer, and reloads inside one transaction. A failure
+rolls back root registration, owned rows, and newly created shared records.
+Existing root definitions cannot be silently remapped by an import. Run and
+generated child IDs remain stable for retries of the same proposal; repeating
+a successful proposal follows existing aggregate upsert behavior and records
+the new import time. Duplicate-import product policy and the entire Import/Review
+UI remain deferred to M2B2. Schema version remains 3.

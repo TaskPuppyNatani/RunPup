@@ -84,50 +84,69 @@ class CatalogRepository:
     def save_run(self, run: Run) -> None:
         """Save a full aggregate; a failure restores its previous catalog state."""
         with self.database.transaction() as connection:
-            _insert(connection, "run", {key: getattr(run, key) for key in _RUN_COLUMNS}, upsert=True)
-            # Remove dependent rows first. No operation here accesses external files.
-            for table in ("provenance", "import_diagnostic", "run_dataset", "run_tag",
-                          "parameter", "metric", "artifact"):
-                connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (run.id,))
+            self._save_run(connection, run)
 
-            for position, parameter in enumerate(run.parameters):
-                _insert(connection, "parameter", {
-                    "id": parameter.id, "run_id": run.id, "position": position,
-                    "key": parameter.key, "value_json": _json(parameter.value),
-                    "value_type": parameter.value_type, "category": parameter.category,
-                })
-            for position, metric in enumerate(run.metrics):
-                _insert(connection, "metric", {**asdict(metric), "run_id": run.id, "position": position})
-            for position, artifact in enumerate(run.artifacts):
-                _insert(connection, "artifact", {**asdict(artifact), "position": position})
-            for position, dataset in enumerate(run.datasets):
-                _save_shared(connection, "dataset", asdict(dataset))
-                _insert(connection, "run_dataset", {
-                    "run_id": run.id, "dataset_id": dataset.id, "position": position,
-                })
-            for position, tag in enumerate(run.tags):
-                _save_shared(connection, "tag", asdict(tag))
-                _insert(connection, "run_tag", {"run_id": run.id, "tag_id": tag.id, "position": position})
+    def save_import(self, run: Run, root: StorageRoot) -> Run:
+        """Register an unchanged root, save the aggregate, and reload atomically."""
+        if run.source_storage_root_id != root.id:
+            raise ValueError("Import root must be the run's source storage root")
+        with self.database.transaction() as connection:
+            _save_shared(connection, "storage_root", asdict(root))
+            self._save_run(connection, run)
+            row = connection.execute("SELECT * FROM run WHERE id = ?", (run.id,)).fetchone()
+            return _load_run(connection, row)
 
-            for position, provenance in enumerate(run.provenance):
-                targets = {column: None for column in _TARGET_COLUMNS.values()}
-                if provenance.target_entity is not EntityType.RUN:
-                    targets[_TARGET_COLUMNS[provenance.target_entity]] = provenance.target_id
-                _insert(connection, "provenance", {
-                    "id": provenance.id, "run_id": run.id, "position": position,
-                    "target_entity": provenance.target_entity, "target_field": provenance.target_field,
-                    **targets, "source_type": provenance.source_type,
-                    "source_reference": provenance.source_reference,
-                    "original_json": _json(provenance.original_value),
-                    "candidate_json": _json(provenance.candidate_value),
-                    "current_json": _json(provenance.current_value),
-                    "confidence": provenance.confidence, "user_modified": provenance.user_modified,
-                    "detected_at": provenance.detected_at,
-                })
-            for position, diagnostic in enumerate(run.diagnostics):
-                _insert(connection, "import_diagnostic", {
-                    **asdict(diagnostic), "run_id": run.id, "position": position,
-                })
+    def get_dataset(self, dataset_id: str) -> Dataset | None:
+        with self.database.transaction(write=False) as connection:
+            row = connection.execute("SELECT * FROM dataset WHERE id = ?", (dataset_id,)).fetchone()
+            return Dataset(**dict(row)) if row is not None else None
+
+    @staticmethod
+    def _save_run(connection: sqlite3.Connection, run: Run) -> None:
+        _insert(connection, "run", {key: getattr(run, key) for key in _RUN_COLUMNS}, upsert=True)
+        # Remove dependent rows first. No operation here accesses external files.
+        for table in ("provenance", "import_diagnostic", "run_dataset", "run_tag",
+                      "parameter", "metric", "artifact"):
+            connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (run.id,))
+
+        for position, parameter in enumerate(run.parameters):
+            _insert(connection, "parameter", {
+                "id": parameter.id, "run_id": run.id, "position": position,
+                "key": parameter.key, "value_json": _json(parameter.value),
+                "value_type": parameter.value_type, "category": parameter.category,
+            })
+        for position, metric in enumerate(run.metrics):
+            _insert(connection, "metric", {**asdict(metric), "run_id": run.id, "position": position})
+        for position, artifact in enumerate(run.artifacts):
+            _insert(connection, "artifact", {**asdict(artifact), "position": position})
+        for position, dataset in enumerate(run.datasets):
+            _save_shared(connection, "dataset", asdict(dataset))
+            _insert(connection, "run_dataset", {
+                "run_id": run.id, "dataset_id": dataset.id, "position": position,
+            })
+        for position, tag in enumerate(run.tags):
+            _save_shared(connection, "tag", asdict(tag))
+            _insert(connection, "run_tag", {"run_id": run.id, "tag_id": tag.id, "position": position})
+
+        for position, provenance in enumerate(run.provenance):
+            targets = {column: None for column in _TARGET_COLUMNS.values()}
+            if provenance.target_entity is not EntityType.RUN:
+                targets[_TARGET_COLUMNS[provenance.target_entity]] = provenance.target_id
+            _insert(connection, "provenance", {
+                "id": provenance.id, "run_id": run.id, "position": position,
+                "target_entity": provenance.target_entity, "target_field": provenance.target_field,
+                **targets, "source_type": provenance.source_type,
+                "source_reference": provenance.source_reference,
+                "original_json": _json(provenance.original_value),
+                "candidate_json": _json(provenance.candidate_value),
+                "current_json": _json(provenance.current_value),
+                "confidence": provenance.confidence, "user_modified": provenance.user_modified,
+                "detected_at": provenance.detected_at,
+            })
+        for position, diagnostic in enumerate(run.diagnostics):
+            _insert(connection, "import_diagnostic", {
+                **asdict(diagnostic), "run_id": run.id, "position": position,
+            })
 
     def get_run(self, run_id: str) -> Run | None:
         with self.database.transaction(write=False) as connection:
