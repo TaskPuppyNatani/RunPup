@@ -103,6 +103,20 @@ def test_metric_context_summary_and_step_are_distinct(repository, storage_root):
     assert repository.get_run(run.id).metrics == metrics
 
 
+def test_metric_unit_is_part_of_metric_identity(repository, storage_root):
+    metrics = (
+        Metric(name="throughput", context="train", summary=MetricSummary.FINAL,
+               value=120, unit="tokens/second"),
+        Metric(name="throughput", context="train", summary=MetricSummary.FINAL,
+               value=2, unit="sequences/second"),
+    )
+    run = make_run(storage_root, metrics=metrics)
+
+    repository.save_run(run)
+
+    assert repository.get_run(run.id).metrics == metrics
+
+
 def test_duplicate_unknown_metric_identity_is_rejected_atomically(repository, storage_root):
     run = make_run(storage_root, metrics=(Metric(name="loss", value=1.0), Metric(name="loss", value=2.0)))
     with pytest.raises(sqlite3.IntegrityError):

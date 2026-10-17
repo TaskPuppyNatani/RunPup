@@ -1,6 +1,6 @@
 """Ordered, additive schema migrations; applied atomically by Database."""
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # A tuple of statements avoids sqlite3.executescript's implicit transaction commit.
 MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -157,5 +157,11 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
             FOREIGN KEY(run_id, artifact_id) REFERENCES artifact(run_id, id) ON DELETE CASCADE
         )""",
         "CREATE INDEX diagnostic_run ON import_diagnostic(run_id)",
+    ),
+    3: (
+        "DROP INDEX metric_identity",
+        """CREATE UNIQUE INDEX metric_identity ON metric(
+            run_id, name, context, summary, COALESCE(step, -1), COALESCE(unit, X'')
+        )""",
     ),
 }

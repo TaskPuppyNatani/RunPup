@@ -10,11 +10,15 @@ def test_available_file_and_directory(tmp_path):
     root = StorageRoot(name="Root", location=str(tmp_path))
     file = tmp_path / "adapter.bin"
     file.write_bytes(b"checkpoint")
+    nested_file = tmp_path / "run outputs" / "café checkpoint.bin"
+    nested_file.parent.mkdir()
+    nested_file.write_bytes(b"checkpoint")
     for reference in ("adapter.bin", "."):
         result = PathResolver().resolve(root, reference)
         assert result.state is Availability.AVAILABLE
         assert result.root_available is result.reference_available is True
     assert PathResolver().resolve(root, "adapter.bin").path == file
+    assert PathResolver().resolve(root, "run outputs/café checkpoint.bin").path == nested_file
 
 
 def test_offline_root_is_different_from_missing_file(tmp_path):
