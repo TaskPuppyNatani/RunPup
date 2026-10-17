@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from runpup.domain.models import EntityType, ImportDiagnostic, Metric, MetricSummary, Parameter, Provenance, Run
+from runpup.domain.proposals import FieldState, ProposedField
 
 
 def test_domain_and_persistence_import_without_qt():
@@ -39,3 +40,15 @@ def test_detection_timestamps_are_required():
     with pytest.raises(ValueError, match="required"):
         Provenance(target_entity=EntityType.RUN, target_id="run", target_field="method",
                    source_type="file", detected_at=None)
+
+
+def test_proposal_scalar_conflicts_preserve_boolean_numeric_distinction():
+    def evidence(value):
+        return Provenance(target_entity=EntityType.RUN, target_id="proposal", target_field="learning_rate",
+                          source_type="training_args", candidate_value=value)
+
+    numeric = ProposedField(key="learning_rate", candidates=(evidence(1), evidence(1.0)))
+    assert numeric.state is FieldState.DETECTED
+    mixed = ProposedField(key="learning_rate", candidates=(evidence(True), evidence(1)))
+    assert mixed.state is FieldState.CONFLICT
+    assert mixed.material
