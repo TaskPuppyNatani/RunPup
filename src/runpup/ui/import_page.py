@@ -57,6 +57,7 @@ class ImportPage(QWidget):
         self._worker = None
         self._closing = False
         self._pending_fields = set()
+        self._displayed_diagnostics = ()
         self.field_rows = {}
         self.cards = []
         layout = QVBoxLayout(self)
@@ -115,7 +116,8 @@ class ImportPage(QWidget):
             column.setSpacing(10)
             column.setAlignment(Qt.AlignmentFlag.AlignTop)
             self.grid.addLayout(column, 0, i)
-        self.review_scroll.viewport().installEventFilter(self)
+        self._review_viewport = self.review_scroll.viewport()
+        self._review_viewport.installEventFilter(self)
         self.review_scroll.setWidget(self.review_body)
         columns.addWidget(self.review_scroll, 1)
 
@@ -144,7 +146,21 @@ class ImportPage(QWidget):
         counts_layout.addWidget(self.edited_count)
         right.addWidget(counts_card)
         warning_card, warning_layout = self._card("Warnings / Diagnostics", "warningCard")
+        warning_heading = warning_layout.takeAt(0).widget()
+        warning_heading.setWordWrap(True)
+        warning_header = QHBoxLayout()
+        warning_header.addWidget(warning_heading, 1)
+        self.copy_diagnostics_button = QPushButton("Copy")
+        self.copy_diagnostics_button.setObjectName("compact")
+        self.copy_diagnostics_button.setToolTip("Copy diagnostics")
+        self.copy_diagnostics_button.setAccessibleName("Copy diagnostics")
+        self.copy_diagnostics_button.clicked.connect(self.copy_diagnostics)
+        warning_header.addWidget(self.copy_diagnostics_button)
+        warning_layout.addLayout(warning_header)
         self.diagnostics_text = label("Scan a folder to see diagnostics.", wrap=True)
+        self.diagnostics_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.diagnostics_text.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         diagnostics_scroll = QScrollArea()
         diagnostics_scroll.setWidgetResizable(True)
         diagnostics_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -260,7 +276,7 @@ class ImportPage(QWidget):
                 self.validation = None
                 retained = " Previous review is kept." if self.proposal is not None else ""
                 self.message.setText(f"No supported training output could be scanned.{retained} Choose a readable HF Trainer / PEFT output folder and try again.")
-                self.diagnostics_text.setText(self._diagnostics(detection.diagnostics))
+                self._set_diagnostics(detection.diagnostics)
                 self._update_save()
                 self.blocking_text.setText("A recognized, safely scanned training folder is required.")
                 self._set_stage(1)
@@ -317,7 +333,7 @@ class ImportPage(QWidget):
         order = {key: i for i, key in enumerate((
             "display_name", "source_trainer", "base_model", "model_revision", "method",
             "dataset_identity", "dataset_hash", "dataset_example_count", "learning_rate",
-            "epochs", "per_device_batch_size", "gradient_accumulation", "max_sequence_length",
+            "epochs", "observed_epoch", "global_step", "max_steps", "per_device_batch_size", "gradient_accumulation", "max_sequence_length",
             "optimizer", "scheduler", "lora_rank", "lora_alpha", "lora_dropout", "lora_target_modules",
         ))}
         fields.sort(key=lambda field: (order.get(field.key, len(order)), field.key))
@@ -335,7 +351,7 @@ class ImportPage(QWidget):
                 group = "Identity"
             elif key in {"base_model", "model_revision", "method", "model_dtype"}:
                 group = "Model"
-            elif key in {"learning_rate", "epochs", "seed", "precision", "optimizer", "scheduler", "warmup_steps", "warmup_ratio", "parallelism", "per_device_batch_size", "gradient_accumulation", "effective_batch_size", "max_sequence_length"}:
+            elif key in {"learning_rate", "epochs", "observed_epoch", "global_step", "max_steps", "seed", "precision", "optimizer", "scheduler", "warmup_steps", "warmup_ratio", "parallelism", "per_device_batch_size", "gradient_accumulation", "effective_batch_size", "max_sequence_length"}:
                 group = "Training"
             else:
                 group = "Other metadata"
@@ -399,7 +415,7 @@ class ImportPage(QWidget):
             self.grid.setColumnStretch(column, 1 if column < columns else 0)
 
     def eventFilter(self, watched, event):
-        if watched is self.review_scroll.viewport() and event.type() == QEvent.Type.Resize:
+        if watched is getattr(self, "_review_viewport", None) and event.type() == QEvent.Type.Resize:
             self._arrange_cards()
         return super().eventFilter(watched, event)
 
@@ -421,11 +437,33 @@ class ImportPage(QWidget):
         self._update_summary()
         self._start("validate")
 
-    @staticmethod
-    def _diagnostics(items):
-        return "\n\n".join(f"{item.severity.value.upper()} · {item.message}" +
-                            (f"\n{item.source_reference}" if item.source_reference else "") +
-                            (f"\n{item.consequence}" if item.consequence else "") for item in items) or "No diagnostics."
+    def _diagnostics(self, items):
+        artifacts = {a.id: a.relative_path for a in self.proposal.artifacts} if self.proposal else {}
+        paragraphs = []
+        for item in items:
+            lines = [item.severity.value.upper()]
+            for caption, value in (("Source", item.source_reference), ("Field", item.affected_field),
+                                   ("Artifact", artifacts.get(item.artifact_id))):
+                if value:
+                    lines.append(f"{caption}: {value}")
+            message = item.message
+            if self.proposal:
+                root = self.proposal.source_storage_root
+                message = message.replace(root.id, root.name)
+            lines.append(message)
+            if item.consequence:
+                lines.append(item.consequence)
+            paragraphs.append("\n".join(lines))
+        return "\n\n".join(paragraphs) or "No diagnostics."
+
+    def _set_diagnostics(self, items, *, empty="No diagnostics."):
+        self._displayed_diagnostics = tuple(items)
+        self.diagnostics_text.setText(self._diagnostics(self._displayed_diagnostics) if self._displayed_diagnostics else empty)
+        self.copy_diagnostics_button.setEnabled(bool(self._displayed_diagnostics))
+
+    def copy_diagnostics(self):
+        if self._displayed_diagnostics:
+            QApplication.clipboard().setText("RunPup Import Diagnostics\n\n" + self.diagnostics_text.text())
 
     def _update_summary(self):
         counts = Counter(field.state.value for field in self.proposal.fields) if self.proposal else Counter()
@@ -439,11 +477,11 @@ class ImportPage(QWidget):
             card.style().unpolish(card)
             card.style().polish(card)
         if self.validation is not None:
-            self.diagnostics_text.setText(self._diagnostics(self.validation.warnings))
+            self._set_diagnostics(self.validation.warnings)
             self.blocking_text.setText(self._diagnostics(self.validation.blocking) if self.validation.blocking else
                                        "No blocking items. Ready to save.")
         elif self.proposal is None:
-            self.diagnostics_text.setText("Scan a folder to see diagnostics.")
+            self._set_diagnostics((), empty="Scan a folder to see diagnostics.")
             self.blocking_text.setText("No proposal to save yet.")
         self._update_save()
 

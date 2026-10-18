@@ -252,6 +252,73 @@ def test_latest_metrics_preserve_context_step_unit_and_competing_values(source):
     assert not proposal.has_blockers
 
 
+def test_trainer_state_facts_and_scheduler_observations_do_not_guess_configuration(source):
+    root, directory, reference = source
+    write_json(directory, "trainer_state.json", {
+        "num_train_epochs": 4, "epoch": 4.0, "global_step": 160, "max_steps": 160,
+        "log_history": [
+            {"loss": 0.8, "learning_rate": 0.00001, "grad_norm": 0.2,
+             "num_input_tokens_seen": 1000, "epoch": 3.9, "step": 150},
+            {"loss": 0.7, "learning_rate": 0.0, "grad_norm": 0.1,
+             "num_input_tokens_seen": 1200, "epoch": 4.0, "step": 160},
+            {"eval_loss": 0.5, "eval_runtime": 2.0, "eval_samples_per_second": 4.0,
+             "train_runtime": 20.0, "train_tokens_per_second": 60.0, "epoch": 4.0, "step": 160},
+        ],
+    })
+    (directory / "training_args.bin").write_bytes(b"never deserialize")
+    before = snapshot(directory)
+    proposal = HFTrainerImporter().scan(root, reference)
+    for key, value in {"epochs": 4, "observed_epoch": 4.0, "global_step": 160, "max_steps": 160}.items():
+        field = proposal.field(key)
+        assert field.value == value and field.state is FieldState.DETECTED
+        assert field.candidates[0].confidence is Confidence.EXACT
+        assert "trainer_state.json#/" in field.candidates[0].source_reference
+    for key in ("learning_rate", "per_device_batch_size", "gradient_accumulation", "max_sequence_length",
+                "optimizer", "scheduler", "warmup_steps", "seed", "precision", "training_status"):
+        assert proposal.field(key).state is FieldState.UNKNOWN
+    rates = [m for m in proposal.metrics if m.name == "learning_rate"]
+    assert [(m.value, m.context, m.summary, m.step) for m in rates] == [
+        (0.0, "train", MetricSummary.VALUE_AT_STEP, 160)]
+    assert {(m.context, m.value) for m in proposal.metrics if m.name == "loss"} == {("train", 0.7), ("validation", 0.5)}
+    assert any(m.name == "num_input_tokens_seen" and m.value == 1200 and m.unit == "tokens" for m in proposal.metrics)
+    assert any(m.name == "epoch" and m.value == 4.0 and m.step == 160 for m in proposal.metrics)
+    assert any(m.name == "tokens_per_second" and m.unit == "tokens/second" for m in proposal.metrics)
+    assert any(d.kind == "unsafe_format" for d in proposal.diagnostics)
+    assert snapshot(directory) == before
+
+
+def test_checkpoint_state_selection_uses_reported_steps_and_retains_tied_disagreements(source):
+    root, directory, reference = source
+    for name, step, epoch, loss in (("checkpoint-999", 30, 0.75, 2.0),
+                                    ("checkpoint-9", 160, 4.0, 0.7),
+                                    ("checkpoint-other", 160, 3.9, 0.9)):
+        write_json(directory, f"{name}/trainer_state.json", {
+            "global_step": step, "epoch": epoch, "max_steps": 160, "num_train_epochs": 4,
+            "log_history": [{"loss": loss, "step": step}],
+        })
+    write_json(directory, "training_args.json", {"num_train_epochs": 3.5})
+    first = HFTrainerImporter().scan(root, reference)
+    second = HFTrainerImporter().scan(root, reference)
+    assert first.field("global_step").value == 160
+    assert first.field("observed_epoch").state is FieldState.CONFLICT
+    assert first.field("epochs").state is FieldState.CONFLICT
+    assert {r.candidate_value for r in first.field("epochs").candidates} == {3.5, 4}
+    assert {(m.value, m.step) for m in first.metrics if m.name == "loss"} == {(0.7, 160), (0.9, 160)}
+    assert [(m.value, m.step) for m in first.metrics] == [(m.value, m.step) for m in second.metrics]
+    assert any(d.kind == "trainer_state_selected" for d in first.diagnostics)
+
+
+def test_invalid_trainer_state_facts_are_not_coerced(source):
+    root, directory, reference = source
+    write_json(directory, "trainer_state.json", {
+        "num_train_epochs": True, "epoch": -1, "global_step": 3.5, "max_steps": -2, "log_history": [],
+    })
+    proposal = HFTrainerImporter().scan(root, reference)
+    for key in ("epochs", "observed_epoch", "global_step", "max_steps"):
+        assert proposal.field(key).state is FieldState.UNKNOWN
+        assert any(d.affected_field == key for d in proposal.diagnostics)
+
+
 def test_explicit_best_metric_semantics_do_not_claim_completion(source):
     root, directory, reference = source
     write_json(directory, "trainer_state.json", {

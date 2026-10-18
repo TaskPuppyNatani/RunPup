@@ -209,3 +209,26 @@ Library keeps the Import page alive; closing waits for the current operation
 to finish safely. No worker accesses widgets. Review cards reflow into one
 column on narrower windows, and review content and diagnostics can scroll.
 Source files remain external and unchanged throughout the UI flow.
+
+## TrainerState completeness and diagnostics (M2C)
+
+Safe `trainer_state.json` data supplies Trainer-reported planned epochs through
+`epochs`, plus `observed_epoch`, `global_step`, and `max_steps` as typed
+parameters. This preserves the distinction between the planned epoch count and
+observed progress; differing safe configuration sources retain their evidence.
+Progress and metrics use the snapshot(s) with the highest valid reported global
+step. Tied or unorderable states retain competing evidence. Planned epoch/step
+facts from older snapshots remain reviewable, and filenames never rank states.
+
+Log summaries also retain observed learning rate, epoch, input-token count,
+runtime, and throughput with context, step, and units where applicable. Step is
+metric metadata rather than a duplicate metric. A scheduler observation never
+fills the configured learning-rate parameter, and reaching an endpoint does not
+assign a completed status. Unsupported configuration stays UNKNOWN;
+`training_args.bin` remains discovery-only and is never deserialized.
+
+Diagnostic text supports normal mouse/keyboard selection, Ctrl+C, and the
+standard context-menu Copy action. The small **Copy** header action copies the
+whole current diagnostics panel in stable plain text, with available severity,
+source, field, artifact path, message, and consequence. Empty panels disable Copy
+and leave the clipboard alone. Copying never changes the proposal.

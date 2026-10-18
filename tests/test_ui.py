@@ -6,11 +6,12 @@ from time import monotonic
 
 import pytest
 
-from PySide6.QtCore import QThread, QTimer, Qt
+from PySide6.QtCore import QPoint, QThread, QTimer, Qt
+from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu
 
-from runpup.domain.models import Dataset, ImportDiagnostic, Metric, MetricSummary, Run
+from runpup.domain.models import Dataset, ImportDiagnostic, Metric, MetricSummary, Run, Severity
 from runpup.domain.proposals import FieldState
 from runpup.services.import_commit import ProposalValidationError
 from runpup.ui.theme import apply_theme
@@ -339,6 +340,65 @@ def test_narrow_review_remains_within_viewport(app, window, training_folder):
     assert all(card.width() <= page.review_scroll.viewport().width() for card in page.cards)
     assert page.card_columns[1].count() == 0
     assert all(row.editor.width() >= 60 for row in page.field_rows.values())
+
+
+def test_diagnostics_selection_standard_copy_and_whole_panel_format(app, window, training_folder):
+    page = scan(app, window, training_folder)
+    proposal = page.proposal
+    artifact = proposal.artifacts[0]
+    diagnostics = (
+        ImportDiagnostic(message="Unsafe file skipped.", source_reference="training_args.bin",
+                         affected_field="learning_rate", artifact_id=artifact.id,
+                         consequence="Configured rate stays unknown."),
+        ImportDiagnostic(message="Latest observations retained.", severity=Severity.INFO),
+    )
+    page.validation = replace(page.validation, warnings=diagnostics)
+    page._update_summary()
+    flags = page.diagnostics_text.textInteractionFlags()
+    assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
+    assert flags & Qt.TextInteractionFlag.TextSelectableByKeyboard
+    page.diagnostics_text.setFocus()
+    page.diagnostics_text.setSelection(0, len("WARNING"))
+    QTest.keyClick(page.diagnostics_text, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert app.clipboard().text() == "WARNING"
+    context_actions = []
+    def choose_standard_copy():
+        menu = app.activePopupWidget()
+        if isinstance(menu, QMenu):
+            for action in menu.actions():
+                if action.text().replace("&", "").startswith("Copy"):
+                    context_actions.append(action.isEnabled())
+                    action.trigger()
+            menu.close()
+    app.clipboard().setText("context copy pending")
+    QTimer.singleShot(0, choose_standard_copy)
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(3, 3),
+                              page.diagnostics_text.mapToGlobal(QPoint(3, 3)))
+    app.sendEvent(page.diagnostics_text, event)
+    wait_for(app, lambda: bool(context_actions))
+    assert context_actions == [True] and app.clipboard().text() == "WARNING"
+    page.copy_diagnostics_button.click()
+    assert app.clipboard().text() == (
+        "RunPup Import Diagnostics\n\nWARNING\nSource: training_args.bin\nField: learning_rate\n"
+        f"Artifact: {artifact.relative_path}\nUnsafe file skipped.\nConfigured rate stays unknown.\n\n"
+        "INFO\nLatest observations retained."
+    )
+    assert artifact.id not in app.clipboard().text() and "None" not in app.clipboard().text()
+    assert page.proposal is proposal and page.proposal.diagnostics == proposal.diagnostics
+
+
+def test_empty_and_current_diagnostics_clipboard_state(app, window, training_folder):
+    page = scan(app, window, training_folder)
+    page.copy_diagnostics_button.click()
+    assert "not deserialized" in app.clipboard().text()
+    page.validation = replace(page.validation, warnings=())
+    page._update_summary()
+    app.clipboard().setText("preserve existing clipboard")
+    assert not page.copy_diagnostics_button.isEnabled()
+    page.copy_diagnostics_button.click()
+    assert app.clipboard().text() == "preserve existing clipboard"
+    page.reset()
+    assert not page.copy_diagnostics_button.isEnabled()
 
 
 def test_library_refresh_displays_repository_records(app, repository, storage_root):

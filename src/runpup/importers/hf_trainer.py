@@ -70,6 +70,14 @@ _HISTORY_FIELDS = {
     "training_finished_at": ("training_finished_at", "timestamp"),
     "training_status": ("training_status", "status"),
 }
+_STATE_PLAN_FIELDS = {
+    "num_train_epochs": ("epochs", "nonnegative_int"),
+    "max_steps": ("max_steps", "nonnegative_int"),
+}
+_STATE_PROGRESS_FIELDS = {
+    "epoch": ("observed_epoch", "nonnegative"),
+    "global_step": ("global_step", "nonnegative_int"),
+}
 _QUANTIZATION_FIELDS = {
     "load_in_4bit": ("load_in_4bit", "boolean"), "load_in_8bit": ("load_in_8bit", "boolean"),
     "bnb_4bit_quant_type": ("quantization_type", "text"),
@@ -484,6 +492,19 @@ class _Scan:
                                       reference=_pointer(splits_reference, split))
 
     def extract_documents(self):
+        states = {ref: doc for ref, (name, doc) in self.documents.items() if name == "trainer_state.json"}
+        steps = {ref: doc["global_step"] for ref, doc in states.items()
+                 if type(doc.get("global_step")) is int and doc["global_step"] >= 0}
+        latest_step = max(steps.values(), default=None)
+        # Filenames and mtimes do not rank state. Ties and unorderable sources
+        # retain competing evidence; older snapshots are not merged as a series.
+        self.selected_trainer_states = {ref for ref in states
+                                        if ref not in steps or steps[ref] == latest_step}
+        if len(states) > 1:
+            self.diagnose("trainer_state_selected", "Trainer progress and metrics use the highest reported global step where available.",
+                          reference="; ".join(sorted(self.selected_trainer_states)),
+                          consequence="Tied or unorderable states retain their evidence. Older snapshots remain artifact references; all planned epoch/step evidence is retained.",
+                          severity=Severity.INFO)
         for reference, (name, document) in sorted(self.documents.items()):
             source = _JSON_SOURCES[name]
             if name == "training_args.json":
@@ -506,7 +527,10 @@ class _Scan:
                 self.extract_dataset(document, reference)
             elif name == "trainer_state.json":
                 self.extract(document, _HISTORY_FIELDS, source, reference)
-                self.extract_metrics(document, reference)
+                self.extract(document, _STATE_PLAN_FIELDS, source, reference)
+                if reference in self.selected_trainer_states:
+                    self.extract(document, _STATE_PROGRESS_FIELDS, source, reference)
+                    self.extract_metrics(document, reference)
             self.extract(document, _QUANTIZATION_FIELDS, source, reference)
             quantization = document.get("quantization_config")
             if quantization is not None:
@@ -550,7 +574,7 @@ class _Scan:
                               reference=f"{reference}#/log_history/{index}/step")
                 continue
             for key, value in sorted(row.items()):
-                if key in {"loss", "grad_norm"}:
+                if key in {"loss", "grad_norm", "learning_rate", "num_input_tokens_seen", "epoch"}:
                     name, context = key, "train"
                 elif key.startswith("eval_"):
                     name, context = key[5:], "validation"
@@ -570,7 +594,8 @@ class _Scan:
                     MetricSummary.VALUE_AT_STEP if step is not None else MetricSummary.UNKNOWN
                 )
                 unit = {"runtime": "seconds", "samples_per_second": "samples/second",
-                        "steps_per_second": "steps/second"}.get(name)
+                        "steps_per_second": "steps/second", "tokens_per_second": "tokens/second",
+                        "num_input_tokens_seen": "tokens", "epoch": "epochs"}.get(name)
                 group = (name, context, summary, unit)
                 if group not in latest and len(latest) >= 256:
                     if not any(item.kind == "metric_limit" for item in self.diagnostics):
@@ -608,7 +633,8 @@ class _Scan:
         arguments = [(reference, document) for reference, (name, document) in self.documents.items()
                      if name == "training_args.json"]
         for reference, (filename, document) in sorted(self.documents.items()):
-            if filename != "trainer_state.json" or document.get("best_metric") is None:
+            if (filename != "trainer_state.json" or reference not in self.selected_trainer_states
+                    or document.get("best_metric") is None):
                 continue
             if not _number(document["best_metric"]):
                 self.diagnose("invalid_metadata", "Best metric value is not a finite number.",

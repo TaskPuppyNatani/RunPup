@@ -15,9 +15,9 @@ from runpup.domain.proposals import FieldState, ProposedField
 INTEGERS = frozenset({
     "lora_rank", "seed", "per_device_batch_size", "gradient_accumulation",
     "parallelism", "effective_batch_size", "max_sequence_length", "warmup_steps",
-    "dataset_example_count", "rating",
+    "dataset_example_count", "rating", "global_step", "max_steps",
 })
-REALS = frozenset({"learning_rate", "epochs", "lora_alpha", "lora_dropout", "warmup_ratio", "best_metric_unidentified"})
+REALS = frozenset({"learning_rate", "epochs", "observed_epoch", "lora_alpha", "lora_dropout", "warmup_ratio", "best_metric_unidentified"})
 BOOLEANS = frozenset({"load_in_4bit", "load_in_8bit", "double_quantization", "qlora", "favorite"})
 
 
