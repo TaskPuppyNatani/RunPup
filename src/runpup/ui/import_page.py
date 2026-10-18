@@ -17,6 +17,27 @@ from runpup.services.import_commit import ProposedRunCommitService, ProposalVali
 from runpup.ui.review_field import ReviewField, label
 
 
+_CORE_REVIEW_FIELDS = frozenset({
+    "display_name", "source_trainer", "base_model", "method", "dataset_identity",
+    "learning_rate", "epochs", "per_device_batch_size", "gradient_accumulation", "max_sequence_length",
+})
+_SUMMARY_LABELS = {
+    "detected": "Detected", "needs_attention": "Needs attention", "unavailable": "Unavailable",
+    "conflict": "Conflicts", "artifacts": "Artifacts",
+}
+
+
+def _review_visible(field):
+    return field.key in _CORE_REVIEW_FIELDS or bool(field.candidates or field.edits)
+
+
+def _review_fields(proposal):
+    fields = list(proposal.fields)
+    if not any(field.key == "source_trainer" for field in fields):
+        fields.append(proposal.field("source_trainer"))
+    return fields
+
+
 class _ImportTask(QThread):
     """Only this workflow's blocking operations; never touches widgets."""
 
@@ -133,13 +154,14 @@ class ImportPage(QWidget):
         counts_card, counts_layout = self._card("Import Summary")
         self.count_labels = {}
         counts_grid = QGridLayout()
-        for i, (key, caption) in enumerate((("detected", "Detected"), ("unknown", "Unknown"),
-                                            ("conflict", "Conflicts"), ("artifacts", "Artifacts"))):
-            counter = label(f"0\n{caption}", "counter")
+        for i, (key, caption) in enumerate(_SUMMARY_LABELS.items()):
+            counter = label(f"0\n{caption}", "counter", wrap=True)
             counter.setProperty("state", key)
             counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            counts_grid.addWidget(counter, 0, i)
+            counts_grid.addWidget(counter, i // 2, i % 2, 1, 2 if key == "artifacts" else 1)
             self.count_labels[key] = counter
+        self.count_labels["needs_attention"].setToolTip("Unknown review fields you may want to fill in manually.")
+        self.count_labels["unavailable"].setToolTip("Metadata RunPup could not safely recover from this training output.")
         counts_grid.setSpacing(4)
         counts_layout.addLayout(counts_grid)
         self.edited_count = label("0 user edited")
@@ -325,11 +347,7 @@ class ImportPage(QWidget):
         self._clear_review()
         p = self.proposal
         groups = {title: [] for title in ("Identity", "Model", "Dataset", "Training", "LoRA / QLoRA", "Results / Metrics", "Other metadata")}
-        core = {"display_name", "source_trainer", "base_model", "method", "dataset_identity",
-                "learning_rate", "epochs", "per_device_batch_size", "gradient_accumulation", "max_sequence_length"}
-        fields = list(p.fields)
-        if not any(f.key == "source_trainer" for f in fields):
-            fields.append(p.field("source_trainer"))
+        fields = _review_fields(p)
         order = {key: i for i, key in enumerate((
             "display_name", "source_trainer", "base_model", "model_revision", "method",
             "dataset_identity", "dataset_hash", "dataset_example_count", "learning_rate",
@@ -339,7 +357,7 @@ class ImportPage(QWidget):
         fields.sort(key=lambda field: (order.get(field.key, len(order)), field.key))
         for field in fields:
             key = field.key
-            if key not in core and not field.candidates and not field.edits:
+            if not _review_visible(field):
                 continue
             if key.startswith("metric:"):
                 group = "Results / Metrics"
@@ -466,10 +484,14 @@ class ImportPage(QWidget):
             QApplication.clipboard().setText("RunPup Import Diagnostics\n\n" + self.diagnostics_text.text())
 
     def _update_summary(self):
-        counts = Counter(field.state.value for field in self.proposal.fields) if self.proposal else Counter()
+        fields = _review_fields(self.proposal) if self.proposal else ()
+        counts = Counter(field.state.value for field in fields)
+        for field in fields:
+            if field.state is FieldState.UNKNOWN:
+                counts["needs_attention" if _review_visible(field) else "unavailable"] += 1
         counts["artifacts"] = len(self.proposal.artifacts) if self.proposal else 0
         for key, widget in self.count_labels.items():
-            widget.setText(f"{counts[key]}\n{key.capitalize() if key != 'conflict' else 'Conflicts'}")
+            widget.setText(f"{counts[key]}\n{_SUMMARY_LABELS[key]}")
         self.edited_count.setText(f"{counts['user_edited']} user edited")
         for card in self.cards:
             conflict = any(row.field.state is FieldState.CONFLICT for row in card.findChildren(ReviewField))

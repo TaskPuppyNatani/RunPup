@@ -81,7 +81,8 @@ def apply_theme(app: QApplication) -> None:
         QLabel#errorText { color: #ffc1ca; font-size: 11px; }
         QLabel#counter { border: 1px solid #3c455a; border-radius: 6px; background: #252b38;
                         font-size: 11px; padding: 9px 2px; color: #b4e0ce; }
-        QLabel#counter[state="unknown"] { color: #ceb5ed; }
+        QLabel#counter[state="needs_attention"] { color: #ceb5ed; }
+        QLabel#counter[state="unavailable"] { color: #abb8cf; }
         QLabel#counter[state="conflict"] { color: #f2a5ba; }
         QLabel#counter[state="artifacts"] { color: #a1cce9; }
         QLineEdit, QComboBox { background: #191f2b; border: 1px solid #45536a; border-radius: 4px;

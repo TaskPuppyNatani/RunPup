@@ -11,7 +11,7 @@ from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu
 
-from runpup.domain.models import Dataset, ImportDiagnostic, Metric, MetricSummary, Run, Severity
+from runpup.domain.models import Dataset, EntityType, ImportDiagnostic, Metric, MetricSummary, Provenance, Run, Severity
 from runpup.domain.proposals import FieldState
 from runpup.services.import_commit import ProposalValidationError
 from runpup.ui.theme import apply_theme
@@ -128,8 +128,11 @@ def test_scan_review_conflict_sources_diagnostics_and_live_counts(app, window, t
     assert "not deserialized" in page.diagnostics_text.text()
     assert "JSON metadata" in page.diagnostics_text.text()
     counts = Counter(f.state.value for f in page.proposal.fields)
-    for state in ("detected", "unknown", "conflict"):
+    for state in ("detected", "conflict"):
         assert page.count_labels[state].text().splitlines()[0] == str(counts[state])
+    visible_unknown = sum(row.field.state is FieldState.UNKNOWN for row in page.field_rows.values())
+    assert page.count_labels["needs_attention"].text().startswith(f"{visible_unknown}\n")
+    assert page.count_labels["unavailable"].text().startswith(f"{counts['unknown'] - visible_unknown}\n")
     evidence = page.proposal.field("lora_rank").candidates
     resolve_rank(app, page)
     assert page.proposal.field("lora_rank").state is FieldState.USER_EDITED
@@ -138,6 +141,74 @@ def test_scan_review_conflict_sources_diagnostics_and_live_counts(app, window, t
     assert page.field_rows["lora_rank"].badge.text() == "USER EDITED"
     assert page.save_button.isEnabled()  # Optional unknown dataset does not block.
     assert page.count_labels["conflict"].text().startswith("0\n")
+
+
+def test_summary_keeps_unknown_accounting_and_follows_review_visibility(app, window, training_folder):
+    page = scan(app, window, training_folder)
+
+    def counts():
+        return {key: int(widget.text().splitlines()[0]) for key, widget in page.count_labels.items()}
+
+    def assert_complete():
+        current = counts()
+        states = Counter(field.state.value for field in page.proposal.fields)
+        rendered_unknown = {key for key, row in page.field_rows.items() if row.field.state is FieldState.UNKNOWN}
+        assert current["detected"] == states["detected"]
+        assert current["conflict"] == states["conflict"]
+        assert current["needs_attention"] == len(rendered_unknown)
+        assert current["needs_attention"] + current["unavailable"] == states["unknown"]
+        accounted = sum(current[key] for key in ("detected", "needs_attention", "unavailable", "conflict"))
+        assert accounted + states["user_edited"] == len(page.proposal.fields)
+        assert current["artifacts"] == len(page.proposal.artifacts)
+        assert page.edited_count.text() == f"{states['user_edited']} user edited"
+        return current
+
+    initial = assert_complete()
+    assert "unknown" not in page.count_labels
+    assert page.count_labels["needs_attention"].text().endswith("Needs attention")
+    assert page.count_labels["unavailable"].text().endswith("Unavailable")
+    assert "seed" not in page.field_rows and page.proposal.field("seed").state is FieldState.UNKNOWN
+    assert initial["unavailable"] > 0 and initial["conflict"] > 0
+    field_count = len(page.proposal.fields)
+    row = page.field_rows["dataset_identity"]
+    row.editor.setText("dataset/synthetic")
+    row.apply_edit()
+    wait_for(app, lambda: not page.busy)
+    edited = assert_complete()
+    assert edited["needs_attention"] == initial["needs_attention"] - 1
+    assert edited["unavailable"] == initial["unavailable"]
+    assert edited["detected"] == initial["detected"]
+    assert len(page.proposal.fields) == field_count
+
+    # An unknown outside the core set becomes reviewable when it has evidence,
+    # even if that evidence cannot establish a usable value.
+    seed = replace(page.proposal.field("seed"), candidates=(Provenance(
+        target_entity=EntityType.RUN, target_id=page.proposal.id, target_field="seed",
+        source_type="training_args", source_reference="training_args.json#/seed",
+        original_value=None, candidate_value=None,
+    ),))
+    page.proposal = replace(page.proposal, fields=tuple(
+        seed if field.key == "seed" else field for field in page.proposal.fields))
+    page._render_review()
+    assert "seed" in page.field_rows and page.field_rows["seed"].field.state is FieldState.UNKNOWN
+    with_evidence = assert_complete()
+    assert with_evidence["needs_attention"] == edited["needs_attention"] + 1
+    assert with_evidence["unavailable"] == edited["unavailable"] - 1
+    assert len(page.proposal.fields) == field_count
+
+
+def test_summary_includes_existing_source_trainer_review_control(app, window, training_folder):
+    (training_folder / "trainer_state.json").unlink()
+    (training_folder / "training_args.json").unlink()
+    page = scan(app, window, training_folder)
+    assert "source_trainer" not in {field.key for field in page.proposal.fields}
+    assert page.field_rows["source_trainer"].field.state is FieldState.UNKNOWN
+    visible_unknown = sum(row.field.state is FieldState.UNKNOWN for row in page.field_rows.values())
+    hidden_unknown = sum(field.state is FieldState.UNKNOWN and field.key not in page.field_rows
+                         for field in page.proposal.fields)
+    assert page.count_labels["needs_attention"].text().startswith(f"{visible_unknown}\n")
+    assert page.count_labels["unavailable"].text().startswith(f"{hidden_unknown}\n")
+    assert page.proposal.field("source_trainer").state is FieldState.UNKNOWN
 
 
 def test_typed_manual_edit_pending_guard_and_discard(app, window, training_folder):

@@ -46,6 +46,8 @@ _LORA_FIELDS = {
     "lora_rank": ("lora_rank", "positive_int"), "lora_alpha": ("lora_alpha", "positive"),
     "lora_dropout": ("lora_dropout", "ratio"), "target_modules": ("lora_target_modules", "modules"),
     "bias": ("lora_bias", "text"), "peft_type": ("method", "method"),
+    "unsloth_load_in_4bit": ("load_in_4bit", "boolean"),
+    "unsloth_training_method": ("qlora", "qlora_flag"),
 }
 _TRAINING_FIELDS = {
     **_MODEL_FIELDS,
@@ -443,6 +445,10 @@ class _Scan:
             if type(raw) is not bool:
                 raise ValueError("Expected boolean")
             value = raw
+        elif kind == "qlora_flag":
+            if not isinstance(raw, str) or raw.lower() not in {"lora", "qlora"}:
+                raise ValueError("Expected explicit LoRA or QLoRA training method")
+            value = raw.lower() == "qlora"
         elif kind == "modules":
             if isinstance(raw, str) and raw:
                 value = _json_text(raw)
@@ -539,6 +545,13 @@ class _Scan:
                 else:
                     self.diagnose("unsupported_metadata", "Quantization metadata is not a structured object.",
                                   reference=reference + "#/quantization_config")
+
+        four_bit = self.proposed_field("load_in_4bit")
+        if four_bit.state is FieldState.DETECTED and four_bit.value is True:
+            for candidate in four_bit.candidates:
+                if candidate.candidate_value is True and candidate.confidence is Confidence.EXACT:
+                    self.add("load_in_8bit", {"load_in_4bit": True}, False, "derived",
+                             candidate.source_reference, Confidence.DERIVED)
 
         if not self.candidates["display_name"]:
             name = self.reference.rsplit("/", 1)[-1] if self.reference != "." else self.root.name

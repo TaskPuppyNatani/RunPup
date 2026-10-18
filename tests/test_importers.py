@@ -116,6 +116,76 @@ def test_generic_model_export_and_unrelated_json_are_not_training_signatures(sou
     assert [d.kind for d in proposal.blocking_diagnostics] == ["unsupported_source"]
 
 
+def test_unsloth_markers_preserve_exact_and_derived_quantization_evidence(source):
+    root, directory, reference = source
+    write_json(directory, "adapter_config.json", {
+        "peft_type": "LORA", "unsloth_load_in_4bit": True, "unsloth_training_method": "qlora",
+    })
+    (directory / "adapter_model.safetensors").write_bytes(b"not inspected")
+    proposal = HFTrainerImporter().scan(root, reference)
+    for key, source_key, original in (("load_in_4bit", "unsloth_load_in_4bit", True),
+                                      ("qlora", "unsloth_training_method", "qlora")):
+        field = proposal.field(key)
+        assert field.state is FieldState.DETECTED and field.value is True
+        record, = field.candidates
+        assert record.original_value == original
+        assert record.source_type == "adapter_config"
+        assert record.source_reference == f"{reference}/adapter_config.json#/{source_key}"
+        assert record.confidence is Confidence.EXACT
+    eight_bit = proposal.field("load_in_8bit")
+    assert eight_bit.state is FieldState.DETECTED and eight_bit.value is False
+    derived, = eight_bit.candidates
+    assert derived.source_type == "derived" and derived.confidence is Confidence.DERIVED
+    assert json.loads(derived.original_value) == {"load_in_4bit": True}
+    assert derived.source_reference == proposal.field("load_in_4bit").candidates[0].source_reference
+    for key in ("quantization_type", "quantization_compute_dtype", "double_quantization"):
+        assert proposal.field(key).state is FieldState.UNKNOWN
+    edited = proposal.with_user_edit("qlora", False)
+    assert edited.field("qlora").value is False
+    assert all(record in edited.provenance for record in proposal.provenance)
+
+
+def test_plain_lora_does_not_guess_unsloth_quantization_flags(source):
+    root, directory, reference = source
+    write_json(directory, "adapter_config.json", {"peft_type": "LORA"})
+    (directory / "adapter_model.safetensors").write_bytes(b"not inspected")
+    proposal = HFTrainerImporter().scan(root, reference)
+    for key in ("load_in_4bit", "qlora", "load_in_8bit"):
+        assert proposal.field(key).state is FieldState.UNKNOWN
+        assert not proposal.field(key).candidates
+
+
+def test_unsloth_conflicts_retain_explicit_and_derived_candidates(source):
+    root, directory, reference = source
+    write_json(directory, "adapter_config.json", {
+        "peft_type": "LORA", "unsloth_load_in_4bit": True, "unsloth_training_method": "qlora",
+    })
+    (directory / "adapter_model.safetensors").write_bytes(b"not inspected")
+    checkpoint = "checkpoint-4/adapter_config.json"
+    write_json(directory, checkpoint, {
+        "unsloth_load_in_4bit": False, "unsloth_training_method": "lora",
+    })
+    proposal = HFTrainerImporter().scan(root, reference)
+    for key in ("load_in_4bit", "qlora"):
+        field = proposal.field(key)
+        assert field.state is FieldState.CONFLICT
+        assert {record.candidate_value for record in field.candidates} == {True, False}
+        assert all(record.confidence is Confidence.EXACT for record in field.candidates)
+        assert len({record.source_reference for record in field.candidates}) == 2
+    # A conflicting premise cannot establish the opposite loading mode.
+    assert proposal.field("load_in_8bit").state is FieldState.UNKNOWN
+    write_json(directory, checkpoint, {"unsloth_training_method": "lora", "load_in_8bit": True})
+    proposal = HFTrainerImporter().scan(root, reference)
+    eight_bit = proposal.field("load_in_8bit")
+    assert eight_bit.state is FieldState.CONFLICT
+    assert {(record.candidate_value, record.confidence, record.source_type)
+            for record in eight_bit.candidates} == {
+                (True, Confidence.EXACT, "adapter_config"), (False, Confidence.DERIVED, "derived"),
+            }
+    edited = proposal.with_user_edit("load_in_8bit", False)
+    assert edited.field("load_in_8bit").candidates == eight_bit.candidates
+
+
 def test_safe_training_arguments_with_payload_are_a_supported_signature(source):
     root, directory, reference = source
     write_json(directory, "training_args.json", {"learning_rate": 0.0002, "num_train_epochs": 3})
@@ -395,6 +465,9 @@ def test_metadata_size_and_metric_limits_are_explicit(source):
 def test_unsafe_formats_scripts_and_model_payloads_are_never_opened(source, monkeypatch):
     root, directory, reference = source
     minimal(directory)
+    write_json(directory, "adapter_config.json", {
+        "peft_type": "LORA", "unsloth_load_in_4bit": True, "unsloth_training_method": "qlora",
+    })
     (directory / "training_args.bin").write_bytes(b"cos\nsystem\n(S'false'\ntR.")
     (directory / "training.py").write_text("raise AssertionError('must never execute')")
     for name in ("adapter_model.safetensors", "model.gguf"):
@@ -435,6 +508,9 @@ def test_unsafe_formats_scripts_and_model_payloads_are_never_opened(source, monk
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     proposal = HFTrainerImporter().scan(root, reference)
     assert not proposal.has_blockers
+    assert proposal.field("load_in_4bit").value is True
+    assert proposal.field("qlora").value is True
+    assert proposal.field("load_in_8bit").value is False
     assert {a.category for a in proposal.artifacts} >= {"metadata", "adapter", "model", "gguf", "checkpoint", "tokenizer"}
     assert next(a for a in proposal.artifacts if a.display_name == "model.gguf").size_bytes == 8 * 1024**3
     assert all(a.hash_value is None and a.hash_algorithm is None for a in proposal.artifacts)
@@ -559,13 +635,18 @@ def test_invalid_recognized_values_remain_diagnostics_not_crashes(source):
         None, {"loss": "bad", "step": 1}, {"loss": 10**400, "step": 2},
         {"eval_loss": 0.3, "step": -1},
     ], "best_metric": {"unsupported": "object"}})
-    write_json(directory, "adapter_config.json", {"peft_type": ["LORA"], "r": True, "lora_alpha": -1})
+    write_json(directory, "adapter_config.json", {
+        "peft_type": ["LORA"], "r": True, "lora_alpha": -1,
+        "unsloth_load_in_4bit": "true", "unsloth_training_method": True,
+    })
     write_json(directory, "training_args.json", {"training_started_at": "2025-01-01", "learning_rate": "guess"})
     proposal = HFTrainerImporter().scan(root, reference)
     assert not proposal.has_blockers
     assert proposal.field("lora_rank").state is FieldState.UNKNOWN
     assert proposal.field("learning_rate").state is FieldState.UNKNOWN
     assert proposal.field("training_started_at").state is FieldState.UNKNOWN
+    for key in ("load_in_4bit", "qlora", "load_in_8bit"):
+        assert proposal.field(key).state is FieldState.UNKNOWN
     assert len([d for d in proposal.diagnostics if d.kind == "invalid_metadata"]) >= 6
 
 

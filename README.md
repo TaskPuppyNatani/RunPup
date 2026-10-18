@@ -195,6 +195,12 @@ Choose a conflicting candidate from its dropdown, or edit a value and click
 unapplied edit. Empty optional inputs remain unknown. Integers and numbers stay
 typed; target modules accept a JSON array of strings or a quoted pattern.
 The summary reflects proposal state and the existing validation service.
+**Needs attention** counts UNKNOWN fields shown for review; **Unavailable** counts
+the remaining UNKNOWN metadata. Both retain complete proposal accounting, while
+manual edits are counted separately. Explicit Unsloth adapter metadata preserves
+QLoRA and 4-bit loading evidence; consistent explicit 4-bit loading derives an
+8-bit flag of false with DERIVED provenance. Other quantization settings stay
+unknown without their own evidence.
 Warnings remain visible, and Blocking Items explain why Save is unavailable.
 Unapplied edits also prevent saving.
 
