@@ -204,6 +204,20 @@ unknown without their own evidence.
 Warnings remain visible, and Blocking Items explain why Save is unavailable.
 Unapplied edits also prevent saving.
 
+**Settings → Import** lets you choose or clear one default training outputs
+folder and toggle **Remember last import location** (enabled initially).
+Selecting a run remembers its parent immediately, even before scanning. Folder
+choices persist in the platform's Qt settings under TaskPuppy/RunPup, separately
+from the catalog. The import chooser tries the valid remembered parent, configured
+default, existing `~/.unsloth/studio/outputs`, then home. Missing folders are
+skipped; no folder is created automatically.
+
+Diagnostics with matching severity, kind, message, consequence, and field are
+grouped for display and **Copy Diagnostics**, with an occurrence count and all
+source paths in natural order. Every original diagnostic record is retained;
+grouping does not change scan or saved evidence. Binary training arguments remain
+discovery-only.
+
 **Save Run** uses the existing atomic commit service. On success, the Library
 reloads persisted data, selects the saved row, and shows a success notice. The
 Import page resets for the next run. A failed save keeps the reviewed proposal

@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
 from runpup.domain.models import MetricSummary, Run
 from runpup.persistence.repository import CatalogRepository
 from runpup.ui.import_page import ImportPage
+from runpup.ui.preferences import ImportPreferences
+from runpup.ui.settings_page import SettingsPage
 
 
 def _label(text: str, name: str = "muted", *, wrap: bool = False) -> QLabel:
@@ -25,9 +27,10 @@ def _label(text: str, name: str = "muted", *, wrap: bool = False) -> QLabel:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, repository: CatalogRepository):
+    def __init__(self, repository: CatalogRepository, *, preferences=None):
         super().__init__()
         self.repository = repository
+        self.preferences = preferences if preferences is not None else ImportPreferences()
         self._close_requested = False
         self.runs: list[Run] = []
         self.setWindowTitle("RunPup — Run Library")
@@ -65,13 +68,15 @@ class MainWindow(QMainWindow):
         for title in ("Library", "Import Run", "Compare Runs", "Storage Roots", "Settings"):
             button = QPushButton(title)
             button.setObjectName("nav")
-            button.setCheckable(title in {"Library", "Import Run"})
-            button.setAutoExclusive(title in {"Library", "Import Run"})
+            button.setCheckable(title in {"Library", "Import Run", "Settings"})
+            button.setAutoExclusive(title in {"Library", "Import Run", "Settings"})
             button.setChecked(title == "Library")
             if title == "Library":
                 button.clicked.connect(self.show_library)
             elif title == "Import Run":
                 button.clicked.connect(self.show_import)
+            elif title == "Settings":
+                button.clicked.connect(self.show_settings)
             else:
                 button.setEnabled(False)
                 button.setToolTip("Available in a later milestone")
@@ -165,11 +170,19 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([900, 250])
-        self.import_page = ImportPage(repository)
+        self.import_page = ImportPage(repository, preferences=self.preferences)
         self.import_page.run_saved.connect(self._import_saved)
         self.import_page.idle.connect(self._import_idle)
         self.workspace.addWidget(self.import_page)
+        self.settings_page = SettingsPage(self.preferences)
+        self.workspace.addWidget(self.settings_page)
         self.refresh_library()
+
+    def show_settings(self) -> None:
+        self.settings_page.refresh()
+        self.workspace.setCurrentWidget(self.settings_page)
+        self.navigation_buttons["Settings"].setChecked(True)
+        self.setWindowTitle("RunPup — Settings")
 
     def show_import(self) -> None:
         self.workspace.setCurrentWidget(self.import_page)

@@ -6,7 +6,7 @@ from time import monotonic
 
 import pytest
 
-from PySide6.QtCore import QPoint, QThread, QTimer, Qt
+from PySide6.QtCore import QPoint, QSettings, QThread, QTimer, Qt
 from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu
@@ -15,6 +15,7 @@ from runpup.domain.models import Dataset, EntityType, ImportDiagnostic, Metric, 
 from runpup.domain.proposals import FieldState
 from runpup.services.import_commit import ProposalValidationError
 from runpup.ui.theme import apply_theme
+from runpup.ui.preferences import ImportPreferences
 from runpup.ui.window import MainWindow
 
 
@@ -25,8 +26,8 @@ def app():
     yield application
 
 
-def test_empty_library_opens_real_import_workflow(app, repository):
-    window = MainWindow(repository)
+def test_empty_library_opens_real_import_workflow(app, repository, preferences):
+    window = MainWindow(repository, preferences=preferences)
     try:
         window.show()
         app.processEvents()
@@ -53,8 +54,15 @@ def wait_for(app, condition, timeout=5):
 
 
 @pytest.fixture
-def window(app, repository):
-    widget = MainWindow(repository)
+def preferences(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    return ImportPreferences(QSettings(str(tmp_path / "preferences.ini"), QSettings.Format.IniFormat), home=home)
+
+
+@pytest.fixture
+def window(app, repository, preferences):
+    widget = MainWindow(repository, preferences=preferences)
     widget.show()
     app.processEvents()
     yield widget
@@ -100,19 +108,55 @@ def resolve_rank(app, page):
     wait_for(app, lambda: not page.busy)
 
 
-def test_folder_picker_cancel_and_selection(window, monkeypatch, training_folder):
+def test_folder_picker_cancel_and_selection(window, monkeypatch, training_folder, preferences):
     page = window.import_page
     window.navigation_buttons["Import Run"].click()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: "")
     page.choose_button.click()
     assert page.source_root is None and page.proposal is None
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(training_folder))
+    starts = []
+    def choose(*args):
+        starts.append(args[2])
+        return str(training_folder) if len(starts) == 1 else ""
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
     page.choose_button.click()
     assert page.source_path.text() == str(training_folder) and page.scan_button.isEnabled()
     previous = page.source_root
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: "")
     page.choose_button.click()
     assert page.source_root == previous and page.proposal is None
+    assert starts == [str(preferences.home), str(training_folder.parent)]
+
+
+def test_import_settings_apply_to_chooser_and_can_be_cleared(app, window, preferences, tmp_path, monkeypatch):
+    outputs = tmp_path / "custom training outputs"
+    outputs.mkdir()
+    starts = []
+    def choose(parent, title, directory):
+        starts.append((title, directory))
+        return str(outputs) if title == "Default Training Outputs Folder" else ""
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
+    window.navigation_buttons["Settings"].click()
+    settings = window.settings_page
+    assert window.workspace.currentWidget() is settings
+    assert settings.remember_last.isChecked()
+    settings.browse_button.click()
+    assert settings.default_directory.text() == str(outputs)
+    assert preferences.default_directory == str(outputs)
+    settings.remember_last.click()
+    assert preferences.remember_last is False
+    window.navigation_buttons["Import Run"].click()
+    window.import_page.choose_button.click()
+    assert starts[-1] == ("Choose Training Folder", str(outputs))
+    window.show_settings()
+    settings.clear_button.click()
+    assert preferences.default_directory == "" and not settings.clear_button.isEnabled()
+    window.show_import()
+    window.import_page.choose_button.click()
+    assert starts[-1] == ("Choose Training Folder", str(preferences.home))
+    window.resize(1040, 640)
+    window.show_settings()
+    app.processEvents()
+    assert settings.browse_button.isVisible() and settings.clear_button.isVisible()
 
 
 def test_scan_review_conflict_sources_diagnostics_and_live_counts(app, window, training_folder):
@@ -472,8 +516,31 @@ def test_empty_and_current_diagnostics_clipboard_state(app, window, training_fol
     assert not page.copy_diagnostics_button.isEnabled()
 
 
-def test_library_refresh_displays_repository_records(app, repository, storage_root):
-    window = MainWindow(repository)
+def test_grouped_diagnostics_render_and_copy_all_occurrences(app, window, training_folder):
+    for step in (2, 10):
+        checkpoint = training_folder / f"checkpoint-{step}"
+        checkpoint.mkdir()
+        (checkpoint / "training_args.bin").write_bytes(b"discovery only")
+    page = scan(app, window, training_folder)
+    proposal = page.proposal
+    originals = proposal.diagnostics
+    assert len([item for item in originals if item.kind == "unsafe_format"]) == 3
+    assert "WARNING — 3 occurrences" in page.diagnostics_text.text()
+    assert page.diagnostics_text.text().count("was discovered but not deserialized.") == 1
+    page.copy_diagnostics_button.click()
+    copied = app.clipboard().text()
+    assert copied == "RunPup Import Diagnostics\n\n" + page.diagnostics_text.text()
+    paths = ("training_args.bin", "checkpoint-2/training_args.bin", "checkpoint-10/training_args.bin")
+    assert "Sources:\n" + "\n".join("- " + path for path in paths) in copied
+    assert proposal.diagnostics == originals and page.proposal is proposal
+    assert "JSON metadata" in copied  # The different malformed-JSON diagnostic survives.
+    window.resize(1040, 640)
+    app.processEvents()
+    assert page.diagnostics_text.wordWrap()
+
+
+def test_library_refresh_displays_repository_records(app, repository, storage_root, preferences):
+    window = MainWindow(repository, preferences=preferences)
     try:
         run = Run(display_name="Useful run", source_storage_root_id=storage_root.id,
                   source_relative_directory="one", base_model="model/base", method="LoRA", rating=4,

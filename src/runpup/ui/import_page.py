@@ -14,6 +14,8 @@ from runpup.domain.models import StorageRoot
 from runpup.domain.proposals import FieldState
 from runpup.importers import HFTrainerImporter
 from runpup.services.import_commit import ProposedRunCommitService, ProposalValidationError
+from runpup.ui.diagnostics import format_diagnostics
+from runpup.ui.preferences import ImportPreferences
 from runpup.ui.review_field import ReviewField, label
 
 
@@ -70,8 +72,9 @@ class ImportPage(QWidget):
     run_saved = Signal(object)
     idle = Signal()
 
-    def __init__(self, repository, parent=None, *, importer=None, service=None):
+    def __init__(self, repository, parent=None, *, importer=None, service=None, preferences=None):
         super().__init__(parent)
+        self.preferences = preferences if preferences is not None else ImportPreferences()
         self.importer = importer or HFTrainerImporter()
         self.service = service or ProposedRunCommitService(repository)
         self.proposal = self.validation = self.source_root = None
@@ -231,7 +234,8 @@ class ImportPage(QWidget):
     def choose_folder(self):
         if self.busy:
             return
-        selected = QFileDialog.getExistingDirectory(self, "Choose Training Folder")
+        selected = QFileDialog.getExistingDirectory(
+            self, "Choose Training Folder", self.preferences.initial_directory())
         if selected:
             self.select_folder(selected)
 
@@ -239,6 +243,7 @@ class ImportPage(QWidget):
         if self.busy:
             return
         absolute = str(Path(path).absolute())
+        self.preferences.remember_selection(absolute)
         if self.source_root is None or self.source_root.location != absolute:
             self.reset()
             self.source_root = StorageRoot(name=Path(absolute).name or "Training folder", location=absolute)
@@ -457,22 +462,8 @@ class ImportPage(QWidget):
 
     def _diagnostics(self, items):
         artifacts = {a.id: a.relative_path for a in self.proposal.artifacts} if self.proposal else {}
-        paragraphs = []
-        for item in items:
-            lines = [item.severity.value.upper()]
-            for caption, value in (("Source", item.source_reference), ("Field", item.affected_field),
-                                   ("Artifact", artifacts.get(item.artifact_id))):
-                if value:
-                    lines.append(f"{caption}: {value}")
-            message = item.message
-            if self.proposal:
-                root = self.proposal.source_storage_root
-                message = message.replace(root.id, root.name)
-            lines.append(message)
-            if item.consequence:
-                lines.append(item.consequence)
-            paragraphs.append("\n".join(lines))
-        return "\n\n".join(paragraphs) or "No diagnostics."
+        root = self.proposal.source_storage_root if self.proposal else None
+        return format_diagnostics(items, artifact_paths=artifacts, root=root)
 
     def _set_diagnostics(self, items, *, empty="No diagnostics."):
         self._displayed_diagnostics = tuple(items)
