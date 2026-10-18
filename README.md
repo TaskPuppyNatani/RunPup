@@ -1,10 +1,10 @@
 # RunPup
 
 RunPup is a local-first desktop catalog for completed machine-learning training
-runs. It supplies the domain model, SQLite persistence, external file references,
-a minimal Run Library, and a non-UI HF Trainer/Unsloth-compatible import core.
-Reviewed imports can be saved programmatically. Import review UI and comparison
-are not implemented yet.
+runs. It supplies a Run Library, an Import/Review workflow over the bounded
+HF Trainer/Unsloth-compatible importer, SQLite persistence, and external file
+references. Reviewed imports can also be saved programmatically. Run Details
+and comparison are not implemented yet.
 RunPup does not train models.
 
 ## Develop and launch
@@ -50,7 +50,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
   portable base. There is no remapping or portable-mode UI in this milestone.
 - `services/import_commit.py`: structured review validation, canonical conversion,
   and one transactional repository handoff with an aggregate reload.
-- `ui/`: dark desktop shell, empty state, and repository-backed library rows.
+- `ui/`: dark desktop shell, repository-backed Library, and an in-window
+  Import/Review workspace using the existing proposal and service APIs.
 
 Artifact and dataset records are references, not owned payloads. Saving and
 deleting catalog records never copies, hashes, moves, or deletes their files.
@@ -178,5 +179,33 @@ rolls back root registration, owned rows, and newly created shared records.
 Existing root definitions cannot be silently remapped by an import. Run and
 generated child IDs remain stable for retries of the same proposal; repeating
 a successful proposal follows existing aggregate upsert behavior and records
-the new import time. Duplicate-import product policy and the entire Import/Review
-UI remain deferred to M2B2. Schema version remains 3.
+the new import time. Duplicate-import product policy remains deferred.
+Schema version remains 3.
+
+## Desktop import and review (M2B2)
+
+Open **Import Run**, choose a training output folder, and click **Scan Folder**.
+An indeterminate progress indicator marks scan activity. Review cards show the
+actual field states: DETECTED, UNKNOWN, CONFLICT, and USER EDITED. Expand
+**Sources / edits** to inspect candidates, their source references, confidence,
+and manual history. Conflicting evidence starts expanded.
+
+Choose a conflicting candidate from its dropdown, or edit a value and click
+**Apply** (Enter also applies text edits). The adjacent undo control discards an
+unapplied edit. Empty optional inputs remain unknown. Integers and numbers stay
+typed; target modules accept a JSON array of strings or a quoted pattern.
+The summary reflects proposal state and the existing validation service.
+Warnings remain visible, and Blocking Items explain why Save is unavailable.
+Unapplied edits also prevent saving.
+
+**Save Run** uses the existing atomic commit service. On success, the Library
+reloads persisted data, selects the saved row, and shows a success notice. The
+Import page resets for the next run. A failed save keeps the reviewed proposal
+and offers retry without rescanning; no partial import is committed.
+
+Scanning, reference validation, and saving use a worker dedicated to this
+workflow. Conflicting controls stay disabled while it runs. Navigating to the
+Library keeps the Import page alive; closing waits for the current operation
+to finish safely. No worker accesses widgets. Review cards reflow into one
+column on narrower windows, and review content and diagnostics can scroll.
+Source files remain external and unchanged throughout the UI flow.

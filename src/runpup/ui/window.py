@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from runpup.domain.models import MetricSummary, Run
 from runpup.persistence.repository import CatalogRepository
+from runpup.ui.import_page import ImportPage
 
 
 def _label(text: str, name: str = "muted", *, wrap: bool = False) -> QLabel:
@@ -27,6 +28,7 @@ class MainWindow(QMainWindow):
     def __init__(self, repository: CatalogRepository):
         super().__init__()
         self.repository = repository
+        self._close_requested = False
         self.runs: list[Run] = []
         self.setWindowTitle("RunPup — Run Library")
         self.resize(1440, 860)
@@ -59,28 +61,33 @@ class MainWindow(QMainWindow):
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         nav.addWidget(tagline)
         nav.addSpacing(24)
+        self.navigation_buttons = {}
         for title in ("Library", "Import Run", "Compare Runs", "Storage Roots", "Settings"):
             button = QPushButton(title)
             button.setObjectName("nav")
-            button.setCheckable(title == "Library")
-            button.setAutoExclusive(title == "Library")
+            button.setCheckable(title in {"Library", "Import Run"})
+            button.setAutoExclusive(title in {"Library", "Import Run"})
             button.setChecked(title == "Library")
             if title == "Library":
-                button.clicked.connect(self.refresh_library)
+                button.clicked.connect(self.show_library)
             elif title == "Import Run":
-                button.clicked.connect(self.show_import_notice)
+                button.clicked.connect(self.show_import)
             else:
                 button.setEnabled(False)
                 button.setToolTip("Available in a later milestone")
             nav.addWidget(button)
+            self.navigation_buttons[title] = button
         nav.addStretch()
         nav.addWidget(_label("●  Local catalog", "local"))
         nav.addWidget(_label("Your training files stay where they are.", wrap=True))
         layout.addWidget(navigation)
 
+        self.workspace = QStackedWidget()
+        layout.addWidget(self.workspace, 1)
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.library_page = splitter
+        self.workspace.addWidget(splitter)
         splitter.setChildrenCollapsible(False)
-        layout.addWidget(splitter, 1)
         center = QWidget()
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(8, 8, 8, 0)
@@ -97,9 +104,12 @@ class MainWindow(QMainWindow):
         heading_row.addWidget(refresh)
         import_button = QPushButton("Import Run")
         import_button.setObjectName("primary")
-        import_button.clicked.connect(self.show_import_notice)
+        import_button.clicked.connect(self.show_import)
         heading_row.addWidget(import_button)
         center_layout.addLayout(heading_row)
+        self.save_notice = _label("", "local", wrap=True)
+        self.save_notice.hide()
+        center_layout.addWidget(self.save_notice)
 
         self.content = QStackedWidget()
         self.empty_state = QWidget()
@@ -115,8 +125,7 @@ class MainWindow(QMainWindow):
         empty.addWidget(explanation)
         self.first_import = QPushButton("Import Your First Run")
         self.first_import.setObjectName("primary")
-        self.first_import.setToolTip("Import will be available in a later milestone")
-        self.first_import.clicked.connect(self.show_import_notice)
+        self.first_import.clicked.connect(self.show_import)
         empty.addWidget(self.first_import, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.content.addWidget(self.empty_state)
 
@@ -156,12 +165,44 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([900, 250])
+        self.import_page = ImportPage(repository)
+        self.import_page.run_saved.connect(self._import_saved)
+        self.import_page.idle.connect(self._import_idle)
+        self.workspace.addWidget(self.import_page)
         self.refresh_library()
 
-    def show_import_notice(self) -> None:
-        QMessageBox.information(
-            self, "Import Run", "Import will be available in a later milestone. No files have been scanned or changed."
-        )
+    def show_import(self) -> None:
+        self.workspace.setCurrentWidget(self.import_page)
+        self.navigation_buttons["Import Run"].setChecked(True)
+        self.setWindowTitle("RunPup — Import Run")
+
+    def show_library(self) -> None:
+        self.refresh_library()
+        self.workspace.setCurrentWidget(self.library_page)
+        self.navigation_buttons["Library"].setChecked(True)
+        self.setWindowTitle("RunPup — Run Library")
+
+    def _import_saved(self, run: Run) -> None:
+        self.show_library()
+        self.save_notice.setText(f"Saved ‘{run.display_name}’ to your library.")
+        self.save_notice.show()
+        for row, stored in enumerate(self.runs):
+            if stored.id == run.id:
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                break
+
+    def closeEvent(self, event) -> None:
+        if self.import_page.busy:
+            self._close_requested = True
+            self.import_page.finish_before_close()
+            event.ignore()
+        else:
+            super().closeEvent(event)
+
+    def _import_idle(self) -> None:
+        if self._close_requested:
+            self.close()
 
     def refresh_library(self) -> None:
         try:
