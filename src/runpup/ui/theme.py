@@ -88,6 +88,11 @@ def apply_theme(app: QApplication) -> None:
         QLineEdit, QComboBox { background: #191f2b; border: 1px solid #45536a; border-radius: 4px;
                               padding: 5px 7px; min-height: 17px; selection-background-color: #665088; }
         QLineEdit:focus, QComboBox:focus { border: 1px solid #a38dd0; }
+        QTextEdit { background: #191f2b; border: 1px solid #45536a; border-radius: 4px;
+                    padding: 7px; selection-background-color: #665088; }
+        QTextEdit:focus { border: 1px solid #a38dd0; }
+        QToolButton#detailDisclosure { text-align: left; color: #b9d8e9; padding: 6px;
+                                      font-size: 12px; }
         QComboBox::drop-down { border: none; width: 18px; }
         QComboBox QAbstractItemView { background: #252c3a; selection-background-color: #59417c; }
         QPushButton#compact { padding: 4px 7px; font-size: 11px; }

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from runpup.domain.models import MetricSummary, Run
 from runpup.persistence.repository import CatalogRepository
 from runpup.ui.import_page import ImportPage
+from runpup.ui.details_page import DetailsPage
 from runpup.ui.preferences import ImportPreferences
 from runpup.ui.settings_page import SettingsPage
 
@@ -149,6 +150,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.table.itemActivated.connect(self._open_selected_run)
         self.content.addWidget(self.table)
         center_layout.addWidget(self.content, 1)
         splitter.addWidget(center)
@@ -163,7 +165,11 @@ class MainWindow(QMainWindow):
         right.addWidget(_label("Run inspector", "inspectorHeading"))
         self.inspector_name = _label("Select a run", wrap=True)
         right.addWidget(self.inspector_name)
-        right.addWidget(_label("Detailed settings and artifacts will appear here in a later milestone.", wrap=True))
+        right.addWidget(_label("Open a saved run to inspect its settings, results, and evidence.", wrap=True))
+        self.open_details_button = QPushButton("Open Run Details")
+        self.open_details_button.setEnabled(False)
+        self.open_details_button.clicked.connect(self._open_selected_run)
+        right.addWidget(self.open_details_button)
         right.addStretch()
         right.addWidget(_label("Settings. Results. Sources.", wrap=True))
         splitter.addWidget(inspector)
@@ -176,7 +182,21 @@ class MainWindow(QMainWindow):
         self.workspace.addWidget(self.import_page)
         self.settings_page = SettingsPage(self.preferences)
         self.workspace.addWidget(self.settings_page)
+        self.details_page = DetailsPage(repository)
+        self.details_page.back_requested.connect(self.show_library)
+        self.details_page.metadata_saved.connect(self.refresh_library)
+        self.details_page.idle.connect(self._import_idle)
+        self.workspace.addWidget(self.details_page)
         self.refresh_library()
+
+    def _open_selected_run(self, *_):
+        row = self.table.currentRow()
+        if row >= 0 and self.table.selectedItems():
+            run_id = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            self.details_page.load_run(run_id)
+            self.workspace.setCurrentWidget(self.details_page)
+            self.navigation_buttons["Library"].setChecked(True)
+            self.setWindowTitle("RunPup — Run Details")
 
     def show_settings(self) -> None:
         self.settings_page.refresh()
@@ -206,9 +226,10 @@ class MainWindow(QMainWindow):
                 break
 
     def closeEvent(self, event) -> None:
-        if self.import_page.busy:
+        if self.import_page.busy or self.details_page.busy:
             self._close_requested = True
             self.import_page.finish_before_close()
+            self.details_page.finish_before_close()
             event.ignore()
         else:
             super().closeEvent(event)
@@ -225,6 +246,7 @@ class MainWindow(QMainWindow):
             return
         self.runs = runs
         self.table.clearSelection()
+        self.open_details_button.setEnabled(False)
         self.inspector_name.setText("Select a run")
         count = len(runs)
         self.run_count.setText(f"{count} {'run' if count == 1 else 'runs'} · local training history")
@@ -249,5 +271,6 @@ class MainWindow(QMainWindow):
 
     def _selection_changed(self) -> None:
         row = self.table.currentRow()
+        self.open_details_button.setEnabled(0 <= row < len(self.runs) and bool(self.table.selectedItems()))
         if 0 <= row < len(self.runs) and self.table.selectedItems():
             self.inspector_name.setText(self.runs[row].display_name)

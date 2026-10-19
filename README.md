@@ -3,8 +3,8 @@
 RunPup is a local-first desktop catalog for completed machine-learning training
 runs. It supplies a Run Library, an Import/Review workflow over the bounded
 HF Trainer/Unsloth-compatible importer, SQLite persistence, and external file
-references. Reviewed imports can also be saved programmatically. Run Details
-and comparison are not implemented yet.
+references. Reviewed imports can also be saved programmatically. Saved runs open
+into Run Details; comparison is not implemented yet.
 RunPup does not train models.
 
 ## Develop and launch
@@ -229,6 +229,32 @@ Library keeps the Import page alive; closing waits for the current operation
 to finish safely. No worker accesses widgets. Review cards reflow into one
 column on narrower windows, and review content and diagnostics can scroll.
 Source files remain external and unchanged throughout the UI flow.
+
+## Saved Run Details (M3A)
+
+Select a Library row and choose **Open Run Details**, or activate the row with
+Enter/double-click. **Library** returns to the catalog. Each opening reloads the
+saved aggregate by ID, without rescanning the training folder. Common settings
+remain visible as Unknown when unavailable. Model, dataset, training and
+LoRA/QLoRA sections separate configuration from observed progress; additional
+saved parameters remain inspectable.
+
+Results retain every metric's name, context, step, unit and summary meaning.
+Artifacts stay external references: select a row to inspect its stored root,
+path, size, hash and recorded verification. PathResolver checks availability
+without reading payloads. Offline roots, missing files and unverified references
+remain distinct, and offline files do not prevent viewing saved metadata.
+Loading and reference checks run outside the UI thread.
+
+Expand **Provenance / Evidence** to inspect original, candidate and current
+values, source references, confidence and manual edit records. Persisted import
+diagnostics reuse grouped presentation and **Copy Diagnostics**. No import is
+rerun to populate either section.
+
+Notes, favorite and rating can be saved through the existing transactional human
+metadata API. Tags are displayed read-only; no separate tag-update API exists.
+Human edits preserve imported evidence. Run Details reflows at compact sizes;
+long text wraps and table tooltips expose full values. Schema remains v3.
 
 ## TrainerState completeness and diagnostics (M2C)
 
