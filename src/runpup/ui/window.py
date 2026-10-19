@@ -1,20 +1,18 @@
 """A repository-backed Library with deliberately limited milestone actions."""
 
 from importlib.resources import files
-import sqlite3
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QSplitter, QStackedWidget, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from runpup.domain.models import MetricSummary, Run
+from runpup.domain.models import Run
 from runpup.persistence.repository import CatalogRepository
 from runpup.ui.import_page import ImportPage
 from runpup.ui.details_page import DetailsPage
+from runpup.ui.library_page import LibraryPage
 from runpup.ui.preferences import ImportPreferences
 from runpup.ui.settings_page import SettingsPage
 
@@ -33,7 +31,6 @@ class MainWindow(QMainWindow):
         self.repository = repository
         self.preferences = preferences if preferences is not None else ImportPreferences()
         self._close_requested = False
-        self.runs: list[Run] = []
         self.setWindowTitle("RunPup — Run Library")
         self.resize(1440, 860)
         self.setMinimumSize(1040, 640)
@@ -90,92 +87,10 @@ class MainWindow(QMainWindow):
 
         self.workspace = QStackedWidget()
         layout.addWidget(self.workspace, 1)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.library_page = splitter
-        self.workspace.addWidget(splitter)
-        splitter.setChildrenCollapsible(False)
-        center = QWidget()
-        center_layout = QVBoxLayout(center)
-        center_layout.setContentsMargins(8, 8, 8, 0)
-        center_layout.setSpacing(18)
-        heading_row = QHBoxLayout()
-        headings = QVBoxLayout()
-        headings.addWidget(_label("Run Library", "heading"))
-        self.run_count = _label("0 runs · local training history")
-        headings.addWidget(self.run_count)
-        heading_row.addLayout(headings)
-        heading_row.addStretch()
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(self.refresh_library)
-        heading_row.addWidget(refresh)
-        import_button = QPushButton("Import Run")
-        import_button.setObjectName("primary")
-        import_button.clicked.connect(self.show_import)
-        heading_row.addWidget(import_button)
-        center_layout.addLayout(heading_row)
-        self.save_notice = _label("", "local", wrap=True)
-        self.save_notice.hide()
-        center_layout.addWidget(self.save_notice)
-
-        self.content = QStackedWidget()
-        self.empty_state = QWidget()
-        self.empty_state.setObjectName("emptyState")
-        empty = QVBoxLayout(self.empty_state)
-        empty.setSpacing(14)
-        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_heading = _label("No training runs yet.", "emptyHeading")
-        empty_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty.addWidget(empty_heading)
-        explanation = _label("Keep the settings and results worth coming back to.", wrap=True)
-        explanation.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty.addWidget(explanation)
-        self.first_import = QPushButton("Import Your First Run")
-        self.first_import.setObjectName("primary")
-        self.first_import.clicked.connect(self.show_import)
-        empty.addWidget(self.first_import, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.content.addWidget(self.empty_state)
-
-        self.table = QTableWidget(0, 8)
-        self.table.setObjectName("runTable")
-        self.table.setHorizontalHeaderLabels([
-            "Run name", "Base model", "Method", "Dataset", "Final train loss", "Rating", "Status", "Imported",
-        ])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(44)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.itemSelectionChanged.connect(self._selection_changed)
-        self.table.itemActivated.connect(self._open_selected_run)
-        self.content.addWidget(self.table)
-        center_layout.addWidget(self.content, 1)
-        splitter.addWidget(center)
-
-        inspector = QFrame()
-        inspector.setObjectName("inspector")
-        inspector.setMinimumWidth(230)
-        inspector.setMaximumWidth(320)
-        right = QVBoxLayout(inspector)
-        right.setContentsMargins(22, 24, 22, 24)
-        right.setSpacing(18)
-        right.addWidget(_label("Run inspector", "inspectorHeading"))
-        self.inspector_name = _label("Select a run", wrap=True)
-        right.addWidget(self.inspector_name)
-        right.addWidget(_label("Open a saved run to inspect its settings, results, and evidence.", wrap=True))
-        self.open_details_button = QPushButton("Open Run Details")
-        self.open_details_button.setEnabled(False)
-        self.open_details_button.clicked.connect(self._open_selected_run)
-        right.addWidget(self.open_details_button)
-        right.addStretch()
-        right.addWidget(_label("Settings. Results. Sources.", wrap=True))
-        splitter.addWidget(inspector)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([900, 250])
+        self.library_page = LibraryPage(repository)
+        self.library_page.open_requested.connect(self._open_run)
+        self.library_page.import_requested.connect(self.show_import)
+        self.workspace.addWidget(self.library_page)
         self.import_page = ImportPage(repository, preferences=self.preferences)
         self.import_page.run_saved.connect(self._import_saved)
         self.import_page.idle.connect(self._import_idle)
@@ -189,14 +104,11 @@ class MainWindow(QMainWindow):
         self.workspace.addWidget(self.details_page)
         self.refresh_library()
 
-    def _open_selected_run(self, *_):
-        row = self.table.currentRow()
-        if row >= 0 and self.table.selectedItems():
-            run_id = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-            self.details_page.load_run(run_id)
-            self.workspace.setCurrentWidget(self.details_page)
-            self.navigation_buttons["Library"].setChecked(True)
-            self.setWindowTitle("RunPup — Run Details")
+    def _open_run(self, run_id):
+        self.details_page.load_run(run_id)
+        self.workspace.setCurrentWidget(self.details_page)
+        self.navigation_buttons["Library"].setChecked(True)
+        self.setWindowTitle("RunPup — Run Details")
 
     def show_settings(self) -> None:
         self.settings_page.refresh()
@@ -217,13 +129,7 @@ class MainWindow(QMainWindow):
 
     def _import_saved(self, run: Run) -> None:
         self.show_library()
-        self.save_notice.setText(f"Saved ‘{run.display_name}’ to your library.")
-        self.save_notice.show()
-        for row, stored in enumerate(self.runs):
-            if stored.id == run.id:
-                self.table.selectRow(row)
-                self.table.scrollToItem(self.table.item(row, 0))
-                break
+        self.library_page.mark_saved(run)
 
     def closeEvent(self, event) -> None:
         if self.import_page.busy or self.details_page.busy:
@@ -239,38 +145,4 @@ class MainWindow(QMainWindow):
             self.close()
 
     def refresh_library(self) -> None:
-        try:
-            runs = self.repository.list_runs()
-        except (sqlite3.Error, ValueError) as error:
-            QMessageBox.critical(self, "Cannot read catalog", str(error))
-            return
-        self.runs = runs
-        self.table.clearSelection()
-        self.open_details_button.setEnabled(False)
-        self.inspector_name.setText("Select a run")
-        count = len(runs)
-        self.run_count.setText(f"{count} {'run' if count == 1 else 'runs'} · local training history")
-        self.table.setRowCount(count)
-        for row, run in enumerate(runs):
-            loss = [metric for metric in run.metrics if metric.name == "loss"
-                    and metric.context == "train" and metric.summary is MetricSummary.FINAL]
-            values = (
-                run.display_name, run.base_model or "—", run.method or "—",
-                ", ".join(dataset.name for dataset in run.datasets) or "—",
-                f"{loss[0].value:.5g}" if len(loss) == 1 else "—",
-                f"{run.rating}/5" if run.rating is not None else "—",
-                run.training_status.value.capitalize(), run.imported_at.astimezone().strftime("%Y-%m-%d"),
-            )
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setToolTip(value)
-                self.table.setItem(row, column, item)
-            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, run.id)
-            self.table.item(row, 7).setToolTip(run.imported_at.isoformat())
-        self.content.setCurrentWidget(self.table if runs else self.empty_state)
-
-    def _selection_changed(self) -> None:
-        row = self.table.currentRow()
-        self.open_details_button.setEnabled(0 <= row < len(self.runs) and bool(self.table.selectedItems()))
-        if 0 <= row < len(self.runs) and self.table.selectedItems():
-            self.inspector_name.setText(self.runs[row].display_name)
+        self.library_page.refresh()

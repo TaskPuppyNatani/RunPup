@@ -7,6 +7,37 @@ references. Reviewed imports can also be saved programmatically. Saved runs open
 into Run Details; comparison is not implemented yet.
 RunPup does not train models.
 
+## Browsing the Library (M3B)
+
+Compact run rows show the saved name, model reference, method/trainer, import
+time, favorite, rating, tags and available planned/observed progress. Long values
+are elided at a fixed row height; hover a row for the full summary and tag set.
+Unknown status stays unknown even when global step equals max steps. Result
+metrics remain in Run Details, where their full identities are inspectable.
+
+Search matches case-insensitive substrings in names, model references, trainer,
+method and tags; surrounding query whitespace is ignored. It does not search
+notes, provenance, diagnostics or artifact paths. Favorites, Rated/Unrated,
+method and one tag filter compose with search. Zero is a rating, distinct from
+Unrated. Method and tag choices come from the catalog and match without case or
+surrounding-whitespace differences.
+
+Sort by newest/oldest import, name A–Z/Z–A, or rating high to low (unrated last).
+Run IDs break ties deterministically. **Reset filters** clears search and filters
+while retaining the sort. An empty catalog offers Import; no matching runs offers
+a separate clear action. Search/filter/sort context persists during the current
+session, including after opening Details. Favorite/rating edits refresh the
+Library without changing criteria; selection follows the run ID if it still
+matches, or clears if the run is filtered out. Editing remains in Details.
+
+The Library uses `CatalogRepository.list_run_summaries()`: three batched SELECTs
+in one read transaction for run identity, tags and five progress/QLoRA parameter
+keys. It does not load artifacts, metrics, datasets, provenance or diagnostics.
+Search/filter/sort use the cached summaries, with no query per keystroke and no
+external-root checks. Full canonical aggregates are loaded only when opening
+Details. Schema remains v3; no search index or persistent query preferences are
+added.
+
 ## Develop and launch
 
 Python 3.11 or later is required. From the project directory:

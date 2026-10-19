@@ -31,9 +31,9 @@ def test_empty_library_opens_real_import_workflow(app, repository, preferences):
     try:
         window.show()
         app.processEvents()
-        assert window.content.currentWidget() is window.empty_state
-        assert "0 runs" in window.run_count.text()
-        window.first_import.click()
+        assert window.library_page.content.currentWidget() is window.library_page.empty_state
+        assert "0 runs" in window.library_page.count.text()
+        window.library_page.first_import.click()
         assert window.workspace.currentWidget() is window.import_page
         assert window.import_page.proposal is None
         assert window.import_page.choose_button.isEnabled()
@@ -304,9 +304,9 @@ def test_successful_save_refreshes_repository_library_and_guards_repeat(app, win
     assert calls == [proposal_id]
     assert repository.get_run(proposal_id).display_name == "Useful import"
     assert window.workspace.currentWidget() is window.library_page
-    assert window.table.rowCount() == 1 and window.table.item(0, 0).text() == "Useful import"
-    assert window.table.item(0, 0).data(Qt.ItemDataRole.UserRole) == proposal_id
-    assert window.table.selectedItems() and "Saved" in window.save_notice.text()
+    assert window.library_page.model.rowCount() == 1 and window.library_page.model.rows[0].display_name == "Useful import"
+    assert window.library_page.model.index(0).data(Qt.ItemDataRole.UserRole) == proposal_id
+    assert window.library_page.selected_id and "Saved" in window.library_page.notice.text()
     assert page.proposal is None and page.source_root is None
     assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in training_folder.iterdir()} == before
 
@@ -325,7 +325,7 @@ def test_save_failure_keeps_review_for_retry(app, window, repository, training_f
     assert "Nothing was saved" in page.message.text() and "try Save Run again" in page.message.text()
     assert "SQL" not in page.message.text()
     assert window.workspace.currentWidget() is page
-    assert repository.list_runs() == [] and window.table.rowCount() == 0
+    assert repository.list_runs() == [] and window.library_page.model.rowCount() == 0
     monkeypatch.setattr(page.service, "commit", original)
     page.save_button.click()
     wait_for(app, lambda: not page.busy)
@@ -552,12 +552,13 @@ def test_library_refresh_displays_repository_records(app, repository, storage_ro
         window.refresh_library()
         window.show()
         app.processEvents()
-        assert window.content.currentWidget() is window.table
-        assert window.table.rowCount() == 1
-        assert [window.table.item(0, col).text() for col in range(7)] == [
-            "Useful run", "model/base", "LoRA", "Training set", "0.8", "4/5", "Unknown",
-        ]
-        window.table.selectRow(0)
-        assert window.inspector_name.text() == run.display_name
+        page = window.library_page
+        assert page.content.currentWidget() is page.run_list
+        assert page.model.rowCount() == 1
+        text = page.model.index(0).data()
+        for expected in ("Useful run", "model/base", "LoRA", "4/5", "Status unknown"):
+            assert expected in text
+        page.run_list.setCurrentIndex(page.model.index(0))
+        assert page.selected_id == run.id and page.open_button.isEnabled()
     finally:
         window.close()

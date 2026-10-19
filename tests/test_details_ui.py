@@ -48,9 +48,9 @@ def window(app, repository, tmp_path):
 
 def open_run(app, window, run):
     window.show_library()
-    row = next(i for i, stored in enumerate(window.runs) if stored.id == run.id)
-    window.table.selectRow(row)
-    window.open_details_button.click()
+    row = next(i for i, stored in enumerate(window.library_page.model.rows) if stored.id == run.id)
+    window.library_page.run_list.setCurrentIndex(window.library_page.model.index(row))
+    window.library_page.open_button.click()
     wait_for(app, lambda: not window.details_page.busy)
     return window.details_page
 
@@ -61,10 +61,10 @@ def visible_text(page):
 
 def test_library_keyboard_activation_loads_current_identity_and_back(app, window, repository, saved_run):
     window.refresh_library()
-    window.table.selectRow(0)
+    window.library_page.run_list.setCurrentIndex(window.library_page.model.index(0))
     repository.save_run(replace(saved_run, display_name="Changed after Library loaded"))
-    window.table.setFocus()
-    QTest.keyClick(window.table, Qt.Key.Key_Return)
+    window.library_page.run_list.setFocus()
+    QTest.keyClick(window.library_page.run_list, Qt.Key.Key_Return)
     wait_for(app, lambda: not window.details_page.busy)
     page = window.details_page
     assert window.workspace.currentWidget() is page
@@ -72,20 +72,20 @@ def test_library_keyboard_activation_loads_current_identity_and_back(app, window
     assert page.name_label.text() == "Changed after Library loaded"
     page.back_button.click()
     assert window.workspace.currentWidget() is window.library_page
-    assert window.table.item(0, 0).text() == "Changed after Library loaded"
+    assert window.library_page.model.rows[0].display_name == "Changed after Library loaded"
 
 
 @pytest.mark.parametrize("failure", ("deleted", "database", "invalid"))
 def test_details_load_failure_is_recoverable(app, window, repository, saved_run, monkeypatch, failure):
     window.refresh_library()
-    window.table.selectRow(0)
+    window.library_page.run_list.setCurrentIndex(window.library_page.model.index(0))
     if failure == "deleted":
         repository.delete_run(saved_run.id)
     else:
         def fail(_):
             raise sqlite3.OperationalError("Read failed") if failure == "database" else ValueError("Invalid stored value")
         monkeypatch.setattr(repository, "get_run", fail)
-    window.open_details_button.click()
+    window.library_page.open_button.click()
     wait_for(app, lambda: not window.details_page.busy)
     page = window.details_page
     assert "Cannot open saved run" in page.status.text()
@@ -193,8 +193,8 @@ def test_human_metadata_updates_only_existing_write_seam_and_refreshes_library(a
     assert page.details.run == stored and page.metadata_notice.text() == "Metadata saved."
     assert window.workspace.currentWidget() is page
     page.back_button.click()
-    row = next(i for i, run in enumerate(window.runs) if run.id == stored.id)
-    assert window.table.item(row, 5).text() == "0/5"
+    row = next(i for i, run in enumerate(window.library_page.model.rows) if run.id == stored.id)
+    assert window.library_page.model.rows[row].rating == 0
 
 
 def test_human_update_failure_keeps_edit_for_retry(app, window, repository, saved_run, monkeypatch):

@@ -9,9 +9,10 @@ from typing import Any
 
 from runpup.domain.models import (
     Artifact, Dataset, EntityType, ImportDiagnostic, Metric, Parameter,
-    Provenance, Run, StorageRoot, Tag, validate_human_metadata,
+    Provenance, Run, StorageRoot, Tag, TrainingStatus, validate_human_metadata,
 )
 from runpup.persistence.database import Database
+from runpup.persistence.library import RunSummary, SUMMARY_PARAMETERS
 
 
 _RUN_COLUMNS = (
@@ -157,6 +158,35 @@ class CatalogRepository:
         with self.database.transaction(write=False) as connection:
             rows = connection.execute("SELECT * FROM run ORDER BY imported_at DESC, id").fetchall()
             return [_load_run(connection, row) for row in rows]
+
+    def list_run_summaries(self) -> list[RunSummary]:
+        """Three batched reads in one snapshot; never load payload/evidence relations."""
+        with self.database.transaction(write=False) as connection:
+            runs = connection.execute(
+                "SELECT id, display_name, imported_at, base_model, source_trainer, method, "
+                "rating, favorite, training_status FROM run ORDER BY imported_at DESC, id"
+            ).fetchall()
+            tags = {}
+            for row in connection.execute(
+                "SELECT rt.run_id, t.name FROM run_tag rt JOIN tag t ON t.id = rt.tag_id "
+                "ORDER BY rt.run_id, rt.position"
+            ):
+                tags.setdefault(row["run_id"], []).append(row["name"])
+            parameters = {}
+            for row in connection.execute(
+                "SELECT run_id, id, key, value_json, value_type, category FROM parameter WHERE key IN (" +
+                ",".join("?" for _ in SUMMARY_PARAMETERS) + ") ORDER BY run_id, position", SUMMARY_PARAMETERS
+            ):
+                parameter = Parameter(id=row["id"], key=row["key"], value=json.loads(row["value_json"]),
+                                      category=row["category"])
+                if parameter.value_type != row["value_type"]:
+                    raise ValueError(f"Stored parameter type mismatch: {parameter.key}")
+                parameters.setdefault(row["run_id"], []).append(parameter)
+            return [RunSummary(**{**dict(row), "imported_at": _timestamp(row["imported_at"]),
+                                  "favorite": bool(row["favorite"]),
+                                  "training_status": TrainingStatus(row["training_status"])},
+                               tags=tuple(tags.get(row["id"], ())),
+                               parameters=tuple(parameters.get(row["id"], ()))) for row in runs]
 
     def update_human_metadata(self, run_id: str, *, notes: str, rating: int | None, favorite: bool) -> None:
         validate_human_metadata(notes, rating, favorite)

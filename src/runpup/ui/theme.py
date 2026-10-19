@@ -52,6 +52,8 @@ def apply_theme(app: QApplication) -> None:
         QTableWidget { background: #20242f; border: 1px solid #394254;
                        border-radius: 8px; gridline-color: #32394a; selection-background-color: #443658; }
         QTableWidget::item { padding: 6px; }
+        QListView#runList { background: transparent; border: none; outline: none; }
+        QListView#runList:focus { border: 1px solid #75829e; border-radius: 8px; }
         QHeaderView::section { background: #292f3d; color: #c5cddd; padding: 10px 8px;
                                border: none; border-bottom: 1px solid #444e63; }
         QSplitter::handle { background: #191c24; width: 10px; }
