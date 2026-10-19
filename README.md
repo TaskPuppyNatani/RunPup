@@ -4,7 +4,7 @@ RunPup is a local-first desktop catalog for completed machine-learning training
 runs. It supplies a Run Library, an Import/Review workflow over the bounded
 HF Trainer/Unsloth-compatible importer, SQLite persistence, and external file
 references. Reviewed imports can also be saved programmatically. Saved runs open
-into Run Details; comparison is not implemented yet.
+into Run Details or a two-run comparison.
 RunPup does not train models.
 
 ## Browsing the Library (M3B)
@@ -37,6 +37,48 @@ Search/filter/sort use the cached summaries, with no query per keystroke and no
 external-root checks. Full canonical aggregates are loaded only when opening
 Details. Schema remains v3; no search index or persistent query preferences are
 added.
+
+## Compare Runs (M4)
+
+Open **Compare Runs** and choose two saved runs. Selectors use lightweight
+summaries, with method, import time and an ID cue to distinguish similar names.
+Keyboard type-ahead works in the dropdowns. Selecting the same run on both sides
+shows validation instead of comparison. **Compare / Refresh** reloads the two
+selected aggregates; selection changes also refresh automatically.
+
+The default **Show differences only** view contains DIFFERENT, ONLY A and ONLY B
+rows. Uncheck it to include BOTH UNKNOWN and SAME. Each section orders differing
+known values first, then one-sided values, both unknown, and known matches.
+Counts always describe the complete comparison. Unknown on both sides never
+establishes equality. Comparison uses current typed canonical values, without
+floating-point tolerances; booleans remain distinct from numeric zero/one.
+Tags compare as unordered sets of their persisted names.
+
+Stable model/dataset/training/LoRA fields remain available in the full view.
+Flexible parameters retain their key and category identity. Single linked
+datasets compare field by field; unavailable dataset fields use explicit saved
+parameter facts where present, retaining both sources of evidence without counting
+the same fact twice.
+When either run has multiple linked datasets, those datasets align only by shared
+persisted ID. No positional or name-based dataset pairing is guessed.
+
+Metric rows use the union of **name, context, summary, step and unit** identities.
+Different steps, contexts or units stay separate. Artifact rows use the union of
+**storage-root ID and relative path**, comparing stored role/name, size, hash and
+verification metadata. Matching artifact metadata does not verify file contents;
+no filesystem availability checks or payload reads occur in Compare.
+
+Expand any row for full selectable values and each side's **Evidence**, including
+confidence, candidates and human edit history. Equal current values stay SAME
+when their provenance differs. Notes are compact until expanded. The comparison
+is read-only; **Open Run A/B Details** uses the existing editor. **← Compare**
+returns with A/B and the difference toggle preserved, refreshing saved values.
+**Swap A/B** reverses the loaded comparison without additional catalog reads.
+
+Comparisons are computed in memory from only the two selected records, with reads
+off the UI thread and evidence widgets created on expansion. No comparison is
+saved or exported. Schema remains v3. Library selection/search/filter/sort and
+the existing Details availability behavior are unchanged.
 
 ## Develop and launch
 

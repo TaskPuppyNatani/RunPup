@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from runpup.ui.diagnostics import format_diagnostics
+from runpup.ui.evidence import format_evidence
 from runpup.ui.review_field import display, label
 from runpup.ui.run_details import dataset_fields, evidence_groups, load_run_details, ordered_metrics, parameter_sections
 
@@ -275,15 +276,7 @@ class DetailsPage(QWidget):
         self.evidence_buttons = []
         self.evidence_texts = []
         for title, records in evidence_groups(run):
-            paragraphs = []
-            for record in records:
-                paragraphs.append(
-                    f"{record.confidence.value.upper()} · {'User edit' if record.user_modified else 'Source candidate'}\n"
-                    f"Source type: {record.source_type}\nSource: {record.source_reference or 'Unknown'}\n"
-                    f"Original: {display(record.original_value)}\nCandidate: {display(record.candidate_value)}\n"
-                    f"Current: {display(record.current_value)}\nRecorded: {record.detected_at.isoformat()}\n"
-                    f"Target ID: {record.target_id}")
-            text = _text("\n\n".join(paragraphs))
+            text = _text(format_evidence(records))
             self.evidence_texts.append(text)
             self.evidence_buttons.append(_fold(evidence_box, f"{title} · {len(records)} records", text))
         if not run.provenance:

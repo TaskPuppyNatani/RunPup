@@ -52,6 +52,10 @@ def apply_theme(app: QApplication) -> None:
         QTableWidget { background: #20242f; border: 1px solid #394254;
                        border-radius: 8px; gridline-color: #32394a; selection-background-color: #443658; }
         QTableWidget::item { padding: 6px; }
+        QTreeWidget#comparisonTree { background: #20242f; border: 1px solid #394254;
+                                    border-radius: 8px; selection-background-color: #443658; }
+        QTreeWidget#comparisonTree::item { padding: 5px 3px; }
+        QTreeWidget#comparisonTree:focus { border-color: #8ecdd6; }
         QListView#runList { background: transparent; border: none; outline: none; }
         QListView#runList:focus { border: 1px solid #75829e; border-radius: 8px; }
         QHeaderView::section { background: #292f3d; color: #c5cddd; padding: 10px 8px;

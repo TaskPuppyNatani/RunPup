@@ -12,6 +12,7 @@ from runpup.domain.models import Run
 from runpup.persistence.repository import CatalogRepository
 from runpup.ui.import_page import ImportPage
 from runpup.ui.details_page import DetailsPage
+from runpup.ui.compare_page import ComparePage
 from runpup.ui.library_page import LibraryPage
 from runpup.ui.preferences import ImportPreferences
 from runpup.ui.settings_page import SettingsPage
@@ -31,6 +32,7 @@ class MainWindow(QMainWindow):
         self.repository = repository
         self.preferences = preferences if preferences is not None else ImportPreferences()
         self._close_requested = False
+        self._details_origin = "library"
         self.setWindowTitle("RunPup — Run Library")
         self.resize(1440, 860)
         self.setMinimumSize(1040, 640)
@@ -66,8 +68,8 @@ class MainWindow(QMainWindow):
         for title in ("Library", "Import Run", "Compare Runs", "Storage Roots", "Settings"):
             button = QPushButton(title)
             button.setObjectName("nav")
-            button.setCheckable(title in {"Library", "Import Run", "Settings"})
-            button.setAutoExclusive(title in {"Library", "Import Run", "Settings"})
+            button.setCheckable(title in {"Library", "Import Run", "Compare Runs", "Settings"})
+            button.setAutoExclusive(title in {"Library", "Import Run", "Compare Runs", "Settings"})
             button.setChecked(title == "Library")
             if title == "Library":
                 button.clicked.connect(self.show_library)
@@ -75,6 +77,8 @@ class MainWindow(QMainWindow):
                 button.clicked.connect(self.show_import)
             elif title == "Settings":
                 button.clicked.connect(self.show_settings)
+            elif title == "Compare Runs":
+                button.clicked.connect(self.show_compare)
             else:
                 button.setEnabled(False)
                 button.setToolTip("Available in a later milestone")
@@ -98,17 +102,33 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage(self.preferences)
         self.workspace.addWidget(self.settings_page)
         self.details_page = DetailsPage(repository)
-        self.details_page.back_requested.connect(self.show_library)
+        self.details_page.back_requested.connect(self._return_from_details)
         self.details_page.metadata_saved.connect(self.refresh_library)
         self.details_page.idle.connect(self._import_idle)
         self.workspace.addWidget(self.details_page)
+        self.compare_page = ComparePage(repository)
+        self.compare_page.open_requested.connect(lambda run_id: self._open_run(run_id, origin="compare"))
+        self.compare_page.import_requested.connect(self.show_import)
+        self.compare_page.idle.connect(self._import_idle)
+        self.workspace.addWidget(self.compare_page)
         self.refresh_library()
 
-    def _open_run(self, run_id):
+    def _open_run(self, run_id, *, origin="library"):
+        self._details_origin = origin
+        self.details_page.back_button.setText("← Compare" if origin == "compare" else "← Library")
         self.details_page.load_run(run_id)
         self.workspace.setCurrentWidget(self.details_page)
-        self.navigation_buttons["Library"].setChecked(True)
+        self.navigation_buttons["Compare Runs" if origin == "compare" else "Library"].setChecked(True)
         self.setWindowTitle("RunPup — Run Details")
+
+    def _return_from_details(self):
+        self.show_compare() if self._details_origin == "compare" else self.show_library()
+
+    def show_compare(self):
+        self.compare_page.refresh()
+        self.workspace.setCurrentWidget(self.compare_page)
+        self.navigation_buttons["Compare Runs"].setChecked(True)
+        self.setWindowTitle("RunPup — Compare Runs")
 
     def show_settings(self) -> None:
         self.settings_page.refresh()
@@ -132,10 +152,11 @@ class MainWindow(QMainWindow):
         self.library_page.mark_saved(run)
 
     def closeEvent(self, event) -> None:
-        if self.import_page.busy or self.details_page.busy:
+        if self.import_page.busy or self.details_page.busy or self.compare_page.busy:
             self._close_requested = True
             self.import_page.finish_before_close()
             self.details_page.finish_before_close()
+            self.compare_page.finish_before_close()
             event.ignore()
         else:
             super().closeEvent(event)
