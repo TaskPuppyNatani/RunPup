@@ -7,6 +7,21 @@ references. Reviewed imports can also be saved programmatically. Saved runs open
 into Run Details or a two-run comparison.
 RunPup does not train models.
 
+## v0.1 scope and release status
+
+Version 0.1.0 covers import/review/save, searchable Library, editable human
+metadata in Details, two-run Compare, Storage Roots, Settings, and catalog
+backup. The exercised desktop target is Linux; Windows/macOS execution has not
+been certified. Safe import requires descriptor-relative, no-follow filesystem
+access and fails with a blocking diagnostic on platforms without it. There is
+no unsafe fallback for trainer binaries or model payloads.
+
+Backup Restore, live catalog switching/relocation, portable launchers, tag
+editing, additional themes, and comparison export remain outside v0.1.
+Distributions are Python wheels/source archives, not MSI/DMG installers.
+Project licensing has not yet been declared; that remains an owner decision
+before public distribution.
+
 ## Browsing the Library (M3B)
 
 Compact run rows show the saved name, model reference, method/trainer, import
@@ -79,6 +94,19 @@ Comparisons are computed in memory from only the two selected records, with read
 off the UI thread and evidence widgets created on expansion. No comparison is
 saved or exported. Schema remains v3. Library selection/search/filter/sort and
 the existing Details availability behavior are unchanged.
+
+## Storage Roots (M5A)
+
+**Storage Roots** lists stable root identities, mapped paths, availability, and
+catalog artifact-reference counts. **Edit Name** changes the label; **Remap**
+previews a new mapping while preserving run/artifact identities and relative
+paths. Offline mappings can be saved. **Verify** checks only known reference
+existence through PathResolver, without reading or hashing payloads. An online
+root with an absent artifact stays Online; the artifact is Missing.
+
+**Remove Reference** forgets unused catalog metadata only. Artifact, run-source,
+or dataset dependencies block removal; remap instead. No operation moves,
+copies, or deletes Storage Root contents.
 
 ## Develop and launch
 

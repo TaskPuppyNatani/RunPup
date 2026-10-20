@@ -1,6 +1,7 @@
 """SQLite connection and transaction ownership, including schema upgrades."""
 
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 import sqlite3
 from typing import Iterator
@@ -39,6 +40,26 @@ _LEGACY_REQUIRED_COLUMNS = {
 
 class SchemaVersionError(RuntimeError):
     """The catalog cannot be safely opened at the requested schema version."""
+
+
+def _schema_objects(connection):
+    # sqlite_master preserves the declared constraints/index expressions. Compare
+    # our required objects, permitting unrelated extra indexes or test triggers.
+    return {(row[0], row[1]): " ".join(row[2].split()) for row in connection.execute(
+        "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL"
+    )}
+
+
+@lru_cache(maxsize=8)
+def _declared_schema(statements):
+    """Derive signatures from the sealed migrations, without a second schema spec."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        for statement in statements:
+            connection.execute(statement)
+        return tuple(_schema_objects(connection).items())
+    finally:
+        connection.close()
 
 
 class Database:
@@ -104,6 +125,13 @@ class Database:
             raise SchemaVersionError(
                 f"Catalog schema {current} is newer than requested {target_version}; refusing downgrade"
             )
+        if current:
+            actual = _schema_objects(connection)
+            statements = tuple(statement for version in range(1, current + 1)
+                               for statement in MIGRATIONS[version])
+            if any(actual.get(key) != sql for key, sql in _declared_schema(statements)):
+                raise SchemaVersionError(f"Catalog schema {current} is incomplete or incompatible. "
+                                         "Required tables, constraints or indexes differ from RunPup's schema.")
         return current
 
     def initialize(self, *, target_version: int = SCHEMA_VERSION) -> None:
@@ -120,6 +148,7 @@ class Database:
                 for statement in MIGRATIONS[version]:
                     connection.execute(statement)
                 connection.execute(f"PRAGMA user_version = {version}")
+            self._check_identity(connection, target_version, allow_empty=False)
 
     @staticmethod
     def _matches_legacy_schema(connection: sqlite3.Connection, version: int) -> bool:

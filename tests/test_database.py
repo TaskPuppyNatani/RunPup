@@ -158,3 +158,41 @@ def test_unknown_versioned_schema_is_not_silently_upgraded(tmp_path):
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
         assert connection.execute("PRAGMA application_id").fetchone()[0] == 0
         assert connection.execute("SELECT name FROM sqlite_master WHERE name = 'provenance'").fetchone() is None
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_owned_catalog_missing_required_column_is_rejected_without_mutation(tmp_path, version):
+    database = Database(tmp_path / "damaged.sqlite3")
+    database.initialize(target_version=version)
+    with database.transaction() as connection:
+        connection.execute("ALTER TABLE run DROP COLUMN notes")
+    before = database.path.read_bytes()
+    for operation in (database.validate_existing, database.initialize):
+        with pytest.raises(SchemaVersionError, match="schema"):
+            operation()
+        assert database.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("damage", ["missing_tables", "missing_index", "wrong_metric_index", "wrong_foreign_key"])
+def test_catalog_markers_do_not_substitute_for_schema_integrity(tmp_path, damage):
+    database = Database(tmp_path / "marked.sqlite3")
+    with database.transaction() as connection:
+        if damage == "missing_tables":
+            connection.execute("CREATE TABLE unrelated(value TEXT)")
+        else:
+            for version in range(1, 4):
+                for statement in MIGRATIONS[version]:
+                    if damage == "wrong_foreign_key" and statement.startswith("CREATE TABLE run ("):
+                        statement = statement.replace("ON DELETE RESTRICT", "ON DELETE CASCADE")
+                    connection.execute(statement)
+            if damage in {"missing_index", "wrong_metric_index"}:
+                connection.execute("DROP INDEX metric_identity")
+            if damage == "wrong_metric_index":
+                connection.execute("CREATE UNIQUE INDEX metric_identity ON metric(run_id, name)")
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute("PRAGMA user_version = 3")
+    before = database.path.read_bytes()
+    for operation in (database.validate_existing, database.initialize):
+        with pytest.raises(SchemaVersionError, match="schema"):
+            operation()
+        assert database.path.read_bytes() == before
