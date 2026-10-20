@@ -16,6 +16,7 @@ from runpup.ui.compare_page import ComparePage
 from runpup.ui.library_page import LibraryPage
 from runpup.ui.preferences import ImportPreferences
 from runpup.ui.settings_page import SettingsPage
+from runpup.ui.storage_roots_page import StorageRootsPage
 
 
 def _label(text: str, name: str = "muted", *, wrap: bool = False) -> QLabel:
@@ -68,8 +69,8 @@ class MainWindow(QMainWindow):
         for title in ("Library", "Import Run", "Compare Runs", "Storage Roots", "Settings"):
             button = QPushButton(title)
             button.setObjectName("nav")
-            button.setCheckable(title in {"Library", "Import Run", "Compare Runs", "Settings"})
-            button.setAutoExclusive(title in {"Library", "Import Run", "Compare Runs", "Settings"})
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
             button.setChecked(title == "Library")
             if title == "Library":
                 button.clicked.connect(self.show_library)
@@ -79,9 +80,8 @@ class MainWindow(QMainWindow):
                 button.clicked.connect(self.show_settings)
             elif title == "Compare Runs":
                 button.clicked.connect(self.show_compare)
-            else:
-                button.setEnabled(False)
-                button.setToolTip("Available in a later milestone")
+            elif title == "Storage Roots":
+                button.clicked.connect(self.show_storage_roots)
             nav.addWidget(button)
             self.navigation_buttons[title] = button
         nav.addStretch()
@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         self.compare_page.import_requested.connect(self.show_import)
         self.compare_page.idle.connect(self._import_idle)
         self.workspace.addWidget(self.compare_page)
+        self.storage_roots_page = StorageRootsPage(repository)
+        self.storage_roots_page.idle.connect(self._import_idle)
+        self.workspace.addWidget(self.storage_roots_page)
         self.refresh_library()
 
     def _open_run(self, run_id, *, origin="library"):
@@ -136,6 +139,12 @@ class MainWindow(QMainWindow):
         self.navigation_buttons["Settings"].setChecked(True)
         self.setWindowTitle("RunPup — Settings")
 
+    def show_storage_roots(self):
+        self.storage_roots_page.refresh()
+        self.workspace.setCurrentWidget(self.storage_roots_page)
+        self.navigation_buttons["Storage Roots"].setChecked(True)
+        self.setWindowTitle("RunPup — Storage Roots")
+
     def show_import(self) -> None:
         self.workspace.setCurrentWidget(self.import_page)
         self.navigation_buttons["Import Run"].setChecked(True)
@@ -152,11 +161,13 @@ class MainWindow(QMainWindow):
         self.library_page.mark_saved(run)
 
     def closeEvent(self, event) -> None:
-        if self.import_page.busy or self.details_page.busy or self.compare_page.busy:
+        if any(page.busy for page in (self.import_page, self.details_page, self.compare_page,
+                                      self.storage_roots_page)):
             self._close_requested = True
             self.import_page.finish_before_close()
             self.details_page.finish_before_close()
             self.compare_page.finish_before_close()
+            self.storage_roots_page.finish_before_close()
             event.ignore()
         else:
             super().closeEvent(event)

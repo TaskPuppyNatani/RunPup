@@ -116,4 +116,9 @@ def apply_theme(app: QApplication) -> None:
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         QListWidget#artifactList { background: #1d2330; border: none; font-size: 11px; }
         QListWidget#artifactList::item { padding: 6px; border-bottom: 1px solid #303b4c; }
+        QListWidget#storageRootList { background: #20242f; border: 1px solid #394254;
+                                     border-radius: 8px; }
+        QListWidget#storageRootList:focus { border-color: #8ecdd6; }
+        QListWidget#storageRootList::item { padding: 9px; border-bottom: 1px solid #394254; }
+        QListWidget#storageRootList::item:selected { background: #3d3054; color: #f0eaf7; }
     """)

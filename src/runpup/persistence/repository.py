@@ -1,6 +1,6 @@
 """The catalog's SQL boundary. Each operation owns a complete transaction."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from enum import Enum
 import json
@@ -9,10 +9,11 @@ from typing import Any
 
 from runpup.domain.models import (
     Artifact, Dataset, EntityType, ImportDiagnostic, Metric, Parameter,
-    Provenance, Run, StorageRoot, Tag, TrainingStatus, validate_human_metadata,
+    Provenance, RootKind, Run, StorageRoot, Tag, TrainingStatus, validate_human_metadata,
 )
 from runpup.persistence.database import Database
 from runpup.persistence.library import RunSummary, SUMMARY_PARAMETERS
+from runpup.persistence.storage_roots import ROOT_SUMMARIES_SQL, RootInUse, StorageRootSummary, root_summary
 
 
 _RUN_COLUMNS = (
@@ -81,6 +82,59 @@ class CatalogRepository:
             return [StorageRoot(**dict(row)) for row in connection.execute(
                 "SELECT * FROM storage_root ORDER BY name, id"
             )]
+
+    def list_storage_root_summaries(self) -> list[StorageRootSummary]:
+        """One batched read, without loading runs or inspecting external storage."""
+        with self.database.transaction(write=False) as connection:
+            return [root_summary(row) for row in connection.execute(ROOT_SUMMARIES_SQL)]
+
+    def storage_root_references(self, expected: StorageRoot) -> tuple[str, ...]:
+        """Snapshot only known artifact paths for one unchanged root."""
+        with self.database.transaction(write=False) as connection:
+            self._check_storage_root(connection, expected)
+            return tuple(row[0] for row in connection.execute(
+                "SELECT relative_path FROM artifact WHERE storage_root_id = ? ORDER BY id", (expected.id,)
+            ))
+
+    def add_storage_root(self, root: StorageRoot) -> None:
+        """New identity only. Existing same-path roots are valid by schema contract."""
+        with self.database.transaction() as connection:
+            _insert(connection, "storage_root", asdict(root))
+
+    @staticmethod
+    def _check_storage_root(connection, expected):
+        row = connection.execute("SELECT * FROM storage_root WHERE id = ?", (expected.id,)).fetchone()
+        if row is None or StorageRoot(**dict(row)) != expected:
+            raise ValueError("The storage root changed or was removed. Refresh and try again.")
+
+    def rename_storage_root(self, expected: StorageRoot, name: str) -> StorageRoot:
+        updated = replace(expected, name=name)
+        return self._update_storage_root(expected, updated)
+
+    def remap_storage_root(self, expected: StorageRoot, *, location: str, kind: RootKind) -> StorageRoot:
+        updated = replace(expected, location=location, kind=kind)
+        return self._update_storage_root(expected, updated)
+
+    def _update_storage_root(self, expected: StorageRoot, updated: StorageRoot) -> StorageRoot:
+        with self.database.transaction() as connection:
+            self._check_storage_root(connection, expected)
+            _insert(connection, "storage_root", asdict(updated), upsert=True)
+        return updated
+
+    def remove_storage_root(self, expected: StorageRoot) -> None:
+        """Forget unused metadata only. Foreign keys also protect against orphaning."""
+        with self.database.transaction() as connection:
+            self._check_storage_root(connection, expected)
+            counts = connection.execute(
+                "SELECT (SELECT count(*) FROM artifact WHERE storage_root_id = ?) artifact_count, "
+                "(SELECT count(*) FROM run WHERE source_storage_root_id = ?) run_count, "
+                "(SELECT count(*) FROM dataset WHERE storage_root_id = ?) dataset_count",
+                (expected.id,) * 3,
+            ).fetchone()
+            summary = root_summary({**asdict(expected), **dict(counts)})
+            if summary.in_use:
+                raise RootInUse(summary)
+            connection.execute("DELETE FROM storage_root WHERE id = ?", (expected.id,))
 
     def save_run(self, run: Run) -> None:
         """Save a full aggregate; a failure restores its previous catalog state."""
