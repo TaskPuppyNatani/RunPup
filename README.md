@@ -19,8 +19,11 @@ no unsafe fallback for trainer binaries or model payloads.
 Backup Restore, live catalog switching/relocation, portable launchers, tag
 editing, additional themes, and comparison export remain outside v0.1.
 Distributions are Python wheels/source archives, not MSI/DMG installers.
-Project licensing has not yet been declared; that remains an owner decision
-before public distribution.
+
+## License
+
+RunPup is licensed under the GNU General Public License v3.0 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE).
 
 ## Browsing the Library (M3B)
 
