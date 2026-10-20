@@ -14,7 +14,8 @@ from runpup.ui.import_page import ImportPage
 from runpup.ui.details_page import DetailsPage
 from runpup.ui.compare_page import ComparePage
 from runpup.ui.library_page import LibraryPage
-from runpup.ui.preferences import ImportPreferences
+from runpup.ui.preferences import ImportPreferences, default_data_directory
+from runpup.services.data_location import DataLocation
 from runpup.ui.settings_page import SettingsPage
 from runpup.ui.storage_roots_page import StorageRootsPage
 
@@ -28,10 +29,14 @@ def _label(text: str, name: str = "muted", *, wrap: bool = False) -> QLabel:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, repository: CatalogRepository, *, preferences=None):
+    def __init__(self, repository: CatalogRepository, *, preferences=None, data_location=None):
         super().__init__()
         self.repository = repository
         self.preferences = preferences if preferences is not None else ImportPreferences()
+        self.data_location = data_location if data_location is not None else DataLocation(
+            repository.database.path.absolute().parent, repository.database.path.absolute(),
+            default_data_directory(), "Programmatic catalog",
+        )
         self._close_requested = False
         self._details_origin = "library"
         self.setWindowTitle("RunPup — Run Library")
@@ -99,7 +104,8 @@ class MainWindow(QMainWindow):
         self.import_page.run_saved.connect(self._import_saved)
         self.import_page.idle.connect(self._import_idle)
         self.workspace.addWidget(self.import_page)
-        self.settings_page = SettingsPage(self.preferences)
+        self.settings_page = SettingsPage(self.preferences, database=repository.database, location=self.data_location)
+        self.settings_page.idle.connect(self._import_idle)
         self.workspace.addWidget(self.settings_page)
         self.details_page = DetailsPage(repository)
         self.details_page.back_requested.connect(self._return_from_details)
@@ -162,12 +168,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if any(page.busy for page in (self.import_page, self.details_page, self.compare_page,
-                                      self.storage_roots_page)):
+                                      self.storage_roots_page, self.settings_page)):
             self._close_requested = True
             self.import_page.finish_before_close()
             self.details_page.finish_before_close()
             self.compare_page.finish_before_close()
             self.storage_roots_page.finish_before_close()
+            self.settings_page.finish_before_close()
             event.ignore()
         else:
             super().closeEvent(event)

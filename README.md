@@ -100,6 +100,50 @@ directory. To choose a separate catalog directory:
 
 No account, network service, or sample records are needed at runtime.
 
+## Settings, data locations and backups
+
+**Settings → Data & Library** shows the active data directory and actual catalog
+database path. The default is Qt's platform-specific application-local data
+directory for TaskPuppy/RunPup, containing `runpup.sqlite3`.
+
+**Choose Different Directory** validates an empty/new directory or an existing
+RunPup catalog and saves the location for the next ordinary launch. **Use Default**
+clears that selection. Both require restarting: neither switches the active
+catalog, moves files, merges catalogs, nor deletes the previous directory.
+Missing locations initialize a new, empty catalog on launch; existing valid
+catalogs open through the normal migration rules. Unrelated/nonempty directories
+without a RunPup catalog and foreign/incompatible databases are rejected.
+
+Startup precedence is **`--data-dir` → saved Settings location → platform
+default**. An explicit override applies only to that launch and does not rewrite
+the saved selection. A bad saved location offers **Use Default for This Launch**;
+the saved location remains available to inspect/reset in Settings. A bad CLI
+override fails explicitly; retry with an empty or valid RunPup directory.
+The small bootstrap selection and Import preferences share Qt settings under
+TaskPuppy/RunPup, independently of the selected catalog.
+
+**Settings → Backup → Create Backup** writes a ZIP bundle containing a consistent
+SQLite snapshot (`catalog.sqlite3`), a versioned `runpup-backup.json` manifest,
+and allowlisted `preferences.json` (default Import folder and remember-last
+toggle). The backup format version is separate from the catalog schema version.
+Backups can be created while RunPup is open. An existing destination is replaced
+only through the save dialog's normal confirmation, after the new bundle passes
+validation. A failed backup preserves the source catalog and does not publish an
+incomplete archive.
+
+Backups contain runs, metadata, evidence, diagnostics, human edits, and Storage
+Root mappings. **External weights, checkpoints, adapters, dataset payloads,
+trainer outputs and Storage Root contents are excluded.** Machine-specific paths
+remain configuration/reference values and may need changing on another machine.
+Bootstrap location, remembered session path, and backup history are not exported.
+Settings → Import continues to edit the same preferences used by the chooser.
+
+There is no backup restore, automatic relocation, portable-mode detection, or
+portable launcher. `--data-dir` can point to another drive, but does not supply
+a portable resolver base or rebase Storage Roots. Portable-relative roots stay
+Unverified without an explicitly supplied base. The existing dark theme remains;
+there are no placeholder hashing, scanning, or appearance controls.
+
 ## Verify
 
 ```sh
@@ -120,7 +164,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
   or consistent aggregate read. Widgets do not issue SQL.
 - `services/paths.py`: the only external-reference path constructor. Roots may
   have absolute locations or locations relative to an explicitly supplied
-  portable base. There is no remapping or portable-mode UI in this milestone.
+  portable base. Storage Roots manages mappings; portable-base selection and
+  automatic portable-mode behavior remain deferred.
 - `services/import_commit.py`: structured review validation, canonical conversion,
   and one transactional repository handoff with an aggregate reload.
 - `ui/`: dark desktop shell, repository-backed Library, and an in-window

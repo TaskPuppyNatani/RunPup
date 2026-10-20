@@ -66,35 +66,56 @@ class Database:
                 connection.rollback()
                 raise
 
+    @contextmanager
+    def read_connection(self) -> Iterator[sqlite3.Connection]:
+        """Read an existing catalog without creating, migrating or changing it."""
+        connection = sqlite3.connect(self.path.absolute().as_uri() + "?mode=ro", uri=True,
+                                     isolation_level=None, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            yield connection
+        finally:
+            connection.close()
+
+    def validate_existing(self) -> int:
+        """Reuse startup identity/version checks without adopting or migrating a file."""
+        with self.read_connection() as connection:
+            return self._check_identity(connection, SCHEMA_VERSION, allow_empty=False)
+
+    @classmethod
+    def _check_identity(cls, connection, target_version, *, allow_empty):
+        current = connection.execute("PRAGMA user_version").fetchone()[0]
+        application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+        if current == 0:
+            has_schema = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'index', 'view', 'trigger') "
+                "AND name NOT GLOB 'sqlite_*' LIMIT 1"
+            ).fetchone() is not None
+            if application_id != 0 or has_schema:
+                raise SchemaVersionError("Refusing to initialize an unrecognized, unversioned database")
+            if not allow_empty:
+                raise SchemaVersionError("The existing database is not an initialized RunPup catalog")
+        elif application_id not in (0, APPLICATION_ID):
+            raise SchemaVersionError("Database belongs to a different application")
+        elif application_id == 0 and not cls._matches_legacy_schema(connection, current):
+            raise SchemaVersionError(f"Refusing to upgrade an unrecognized database at schema version {current}")
+        if current > target_version:
+            raise SchemaVersionError(
+                f"Catalog schema {current} is newer than requested {target_version}; refusing downgrade"
+            )
+        return current
+
     def initialize(self, *, target_version: int = SCHEMA_VERSION) -> None:
         """Upgrade atomically. Never downgrade, drop tables, or adopt unknown schemas."""
         if not 1 <= target_version <= SCHEMA_VERSION:
             raise SchemaVersionError(f"Unsupported target schema version: {target_version}")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as connection:
-            current = connection.execute("PRAGMA user_version").fetchone()[0]
+            current = self._check_identity(connection, target_version, allow_empty=True)
             application_id = connection.execute("PRAGMA application_id").fetchone()[0]
-            if current == 0:
-                has_schema = connection.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type IN ('table', 'index', 'view', 'trigger') "
-                    "AND name NOT GLOB 'sqlite_*' LIMIT 1"
-                ).fetchone() is not None
-                if application_id != 0 or has_schema:
-                    raise SchemaVersionError("Refusing to initialize an unrecognized, unversioned database")
+            if application_id == 0:
                 connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
-            elif application_id not in (0, APPLICATION_ID):
-                raise SchemaVersionError("Database belongs to a different application")
-            elif application_id == 0:
-                if not self._matches_legacy_schema(connection, current):
-                    raise SchemaVersionError(
-                        f"Refusing to upgrade an unrecognized database at schema version {current}"
-                    )
-                connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
-            if current > target_version:
-                raise SchemaVersionError(
-                    f"Catalog schema {current} is newer than requested {target_version}; refusing downgrade"
-                )
             for version in range(current + 1, target_version + 1):
                 for statement in MIGRATIONS[version]:
                     connection.execute(statement)
